@@ -1,0 +1,2246 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1d4ed8">
+<title>Comparateur Carburant France</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js">
+
+// ═══════════════════════════════════════
+// MOBILE — fonctions d'interface
+// ═══════════════════════════════════════
+
+let mobilePanelOpen = false;
+
+function isMobile() {
+  return window.innerWidth <= 768;
+}
+
+function toggleMobilePanel() {
+  mobilePanelOpen = !mobilePanelOpen;
+  const panel = document.querySelector('.left-panel');
+  const statsBar = document.getElementById('statsBar');
+  const toggleBtn = document.getElementById('mobileListToggle');
+  if (mobilePanelOpen) {
+    panel.classList.add('open');
+    if (statsBar.style.display !== 'none') statsBar.classList.add('with-panel');
+    toggleBtn.textContent = '✕';
+  } else {
+    panel.classList.remove('open');
+    statsBar.classList.remove('with-panel');
+    toggleBtn.textContent = '📋';
+  }
+  // Invalider la carte pour qu'elle se redessine
+  setTimeout(() => map.invalidateSize(), 350);
+}
+
+function mobileNavTo(tab) {
+  const panel = document.querySelector('.left-panel');
+  const hero = document.querySelector('.hero');
+  mobileNavActivate('nav' + tab.charAt(0).toUpperCase() + tab.slice(1));
+
+  if (!isMobile()) return;
+
+  if (tab === 'map') {
+    // Fermer le panel, afficher la carte
+    panel.classList.remove('open');
+    mobilePanelOpen = false;
+    document.getElementById('mobileListToggle').textContent = '📋';
+    setTimeout(() => map.invalidateSize(), 350);
+  } else if (tab === 'list') {
+    // Ouvrir le panel
+    panel.classList.add('open');
+    mobilePanelOpen = true;
+    document.getElementById('mobileListToggle').textContent = '✕';
+  } else if (tab === 'search') {
+    // Scroll vers le haut pour voir la recherche
+    panel.classList.remove('open');
+    mobilePanelOpen = false;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setTimeout(() => document.getElementById('cityInput').focus(), 400);
+  }
+}
+
+function mobileNavActivate(id) {
+  document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById(id);
+  if (btn) btn.classList.add('active');
+}
+
+// Ouvrir automatiquement le panel après une recherche sur mobile
+const _originalRenderResults = renderResults;
+function renderResults(stations) {
+  _originalRenderResults(stations);
+  if (isMobile() && stations.length) {
+    setTimeout(() => {
+      if (!mobilePanelOpen) toggleMobilePanel();
+      mobileNavActivate('navList');
+    }, 300);
+  }
+}
+
+// Adapter la taille de la carte au resize
+window.addEventListener('resize', () => {
+  setTimeout(() => map.invalidateSize(), 100);
+});
+
+// Geste swipe vers le bas pour fermer le panel
+(function setupSwipe() {
+  let startY = 0;
+  const panel = document.querySelector('.left-panel');
+  panel.addEventListener('touchstart', e => { startY = e.touches[0].clientY; }, { passive: true });
+  panel.addEventListener('touchend', e => {
+    const dy = e.changedTouches[0].clientY - startY;
+    if (dy > 60 && mobilePanelOpen) toggleMobilePanel();
+  }, { passive: true });
+})();
+
+// Cacher le hero après une recherche sur mobile
+function hideMobileHero() {
+  if (isMobile()) {
+    document.querySelector('.hero')?.classList.add('hidden-mobile');
+  }
+}
+
+// Patcher geolocate pour cacher le hero
+const _origGeolocate = geolocate;
+function geolocate() {
+  _origGeolocate();
+  hideMobileHero();
+}
+
+// Patcher doSearch pour cacher le hero
+const _origDoSearch = doSearch;
+function doSearch() {
+  _origDoSearch();
+  hideMobileHero();
+}
+
+</script>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --surface: #ffffff;
+    --surface2: #eef1f6;
+    --border: #dde2ec;
+    --text: #1c2033;
+    --muted: #8590aa;
+    --accent: #1d4ed8;
+    --green: #15803d;
+    --green-light: rgba(21,128,61,.08);
+    --red: #b91c1c;
+    --orange: #d97706;
+    --gold: #f59e0b;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Barlow',sans-serif; font-weight:300; background:var(--bg); color:var(--text); min-height:100vh; }
+
+  /* HEADER */
+  header {
+    background:#fff;
+    border-bottom:1px solid var(--border);
+    padding:0 2rem;
+    height:60px;
+    display:flex; align-items:center; justify-content:space-between;
+    position:sticky; top:0; z-index:1000;
+    box-shadow:0 1px 4px rgba(0,0,0,.06);
+  }
+  .logo { font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:1.35rem; color:var(--accent); }
+  .logo span { color:var(--text); }
+  .header-right { font-size:.8rem; color:var(--muted); font-weight:300; }
+
+  /* HERO */
+  .hero {
+    background:#fff;
+    border-bottom:1px solid var(--border);
+    padding:2.5rem 2rem 2rem;
+    text-align:center;
+  }
+  .hero h1 { font-family:'Barlow Condensed',sans-serif; font-size:clamp(1.8rem,4vw,2.8rem); font-weight:800; line-height:1.1; margin-bottom:.5rem; }
+  .hero h1 em { font-style:normal; color:var(--accent); }
+  .hero p { color:var(--muted); font-size:.95rem; font-weight:300; margin-bottom:1.5rem; }
+
+  /* SEARCH ZONE */
+  .search-zone {
+    display:flex; gap:.75rem; flex-wrap:wrap;
+    justify-content:center; align-items:center;
+    max-width:900px; margin:0 auto;
+  }
+  .search-left { display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; justify-content:center; }
+  .search-right { display:flex; align-items:stretch; flex-shrink:0; }
+  .search-input-wrap { position:relative; flex:1; min-width:220px; max-width:340px; }
+  .search-input-wrap input {
+    width:100%;
+    padding:.75rem 1rem .75rem 2.5rem;
+    border:1px solid var(--border);
+    font-family:'Barlow',sans-serif; font-size:1rem; font-weight:400;
+    background:#fff; color:var(--text);
+    outline:none; transition:border-color .2s;
+  }
+  .search-input-wrap input:focus { border-color:var(--accent); }
+  .search-input-wrap input::placeholder { color:var(--muted); }
+  .search-icon { position:absolute; left:.75rem; top:50%; transform:translateY(-50%); font-size:1rem; color:var(--muted); }
+
+  /* FUEL CHIPS */
+  .fuel-chips { display:flex; gap:.4rem; flex-wrap:wrap; justify-content:center; }
+  .fuel-chip {
+    padding:.5rem 1rem;
+    border:1px solid var(--border);
+    background:#fff;
+    font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:.9rem;
+    cursor:pointer; transition:all .15s; color:var(--muted);
+  }
+  .fuel-chip:hover { border-color:var(--accent); color:var(--accent); }
+  .fuel-chip.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+  .btn-geo {
+    padding:.75rem 1.2rem;
+    background:var(--surface2); border:1px solid var(--border);
+    font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:.9rem;
+    cursor:pointer; color:var(--text); transition:all .15s; white-space:nowrap;
+    display:flex; align-items:center; gap:.4rem;
+  }
+  .btn-geo:hover { background:var(--border); }
+
+  .btn-search {
+    padding:.75rem 1.6rem;
+    background:var(--accent); border:none; color:#fff;
+    font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:1rem;
+    cursor:pointer; transition:opacity .15s; white-space:nowrap;
+    letter-spacing:.3px;
+  }
+  .btn-search:hover { opacity:.9; }
+
+  /* MAIN LAYOUT */
+  .main-layout {
+    display:grid;
+    grid-template-columns:380px 1fr;
+    height:calc(100vh - 60px - 190px);
+    min-height:500px;
+  }
+
+  /* LEFT PANEL */
+  .left-panel { background:#fff; border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
+
+  .panel-header {
+    padding:1rem 1.2rem;
+    border-bottom:1px solid var(--border);
+    background:var(--surface2);
+    display:flex; align-items:center; justify-content:space-between;
+    flex-shrink:0;
+  }
+  .panel-header h2 { font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:.95rem; }
+  .result-count { font-size:.78rem; color:var(--muted); font-weight:300; }
+
+  /* SORT BAR */
+  .sort-bar {
+    padding:.6rem 1.2rem;
+    border-bottom:1px solid var(--border);
+    display:flex; gap:.5rem; align-items:center; flex-shrink:0;
+    flex-wrap:wrap;
+  }
+  .sort-label { font-size:.75rem; color:var(--muted); font-weight:400; }
+  .sort-btn {
+    padding:.25rem .7rem; font-size:.75rem; font-weight:600;
+    border:1px solid var(--border); background:#fff;
+    cursor:pointer; color:var(--muted); transition:all .15s;
+  }
+  .sort-btn.active { background:var(--text); color:#fff; border-color:var(--text); }
+
+  /* STATIONS LIST */
+  .stations-list { overflow-y:auto; flex:1; }
+
+  .station-card {
+    padding:1rem 1.2rem;
+    border-bottom:1px solid var(--border);
+    cursor:pointer; transition:background .15s;
+    display:flex; gap:.75rem; align-items:flex-start;
+  }
+  .station-card:hover { background:#f8faff; }
+  .station-card.selected { background:#eff6ff; border-left:3px solid var(--accent); }
+
+  .station-rank {
+    font-family:'Barlow Condensed',sans-serif; font-weight:800;
+    font-size:1.1rem; color:var(--muted); width:22px; flex-shrink:0; margin-top:.1rem;
+  }
+  .station-rank.rank-1 { color:var(--green); }
+  .station-rank.rank-2 { color:#16a34a; }
+  .station-rank.rank-3 { color:#4ade80; }
+
+  .station-info { flex:1; min-width:0; }
+  .station-name { font-weight:700; font-size:.95rem; color:#1c2033; }
+  .station-addr { font-size:.78rem; color:var(--muted); font-weight:400; margin-top:.2rem; line-height:1.3; }
+  .station-meta { display:flex; gap:.5rem; align-items:center; margin-top:.4rem; flex-wrap:wrap; }
+  .station-dist { font-size:.72rem; background:var(--surface2); padding:.1rem .5rem; color:var(--muted); font-weight:400; }
+  .station-update { font-size:.7rem; color:var(--muted); font-weight:300; }
+
+  .station-price-main {
+    font-family:'Barlow Condensed',sans-serif; font-weight:800;
+    font-size:1.4rem; flex-shrink:0; text-align:right;
+  }
+  .station-price-main.price-cheap { color:var(--green); }
+  .station-price-main.price-mid { color:var(--orange); }
+  .station-price-main.price-exp { color:var(--red); }
+  .price-unit { font-size:.72rem; font-weight:300; color:var(--muted); display:block; }
+
+  /* ALL FUELS MINI */
+  .all-fuels { display:flex; gap:.3rem; flex-wrap:wrap; margin-top:.3rem; }
+  .fuel-mini { font-size:.68rem; font-weight:500; padding:.1rem .35rem; background:var(--surface2); color:var(--muted); }
+
+  /* SECTION HEADER itinéraires */
+  .panel-section-header {
+    padding:.55rem 1.2rem;
+    border-bottom:1px solid #bfdbfe;
+    border-top:3px solid var(--accent);
+    font-family:'Barlow Condensed',sans-serif;
+    font-weight:700; font-size:.85rem;
+    color:var(--accent); letter-spacing:.04em;
+    background:#eff6ff;
+  }
+
+  /* LOADING / EMPTY */
+  .state-box { padding:3rem 1.5rem; text-align:center; color:var(--muted); }
+  .state-box .icon { font-size:2.5rem; margin-bottom:.75rem; }
+  .state-box p { font-size:.9rem; font-weight:300; line-height:1.6; }
+  .spinner { width:36px; height:36px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; margin:0 auto 1rem; }
+  @keyframes spin { to{transform:rotate(360deg)} }
+
+  /* MAP — desktop */
+  #map { width:100%; height:100%; }
+
+  /* STATS BAR */
+  .stats-bar {
+    background:#fff; border-top:1px solid var(--border);
+    padding:.75rem 1.5rem;
+    display:flex; gap:2rem; flex-wrap:wrap; align-items:center;
+  }
+  .stats-bar-item { display:flex; flex-direction:column; }
+  .stats-bar-label { font-size:.7rem; color:var(--muted); font-weight:500; text-transform:uppercase; letter-spacing:.05em; }
+  .stats-bar-value { font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:1.1rem; }
+  .stats-bar-value.green { color:var(--green); }
+  .stats-bar-value.red { color:var(--red); }
+  .stats-bar-value.blue { color:var(--accent); }
+
+  /* POPUP */
+  .leaflet-popup-content-wrapper { border-radius:0 !important; box-shadow:0 4px 20px rgba(0,0,0,.15) !important; }
+  .popup-content { font-family:'Barlow',sans-serif; min-width:200px; }
+  .popup-name { font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:1rem; margin-bottom:.3rem; }
+  .popup-addr { font-size:.8rem; color:#666; margin-bottom:.5rem; font-weight:300; }
+  .popup-price { font-family:'Barlow Condensed',sans-serif; font-size:1.5rem; font-weight:800; }
+  .popup-fuels { margin-top:.5rem; display:flex; gap:.3rem; flex-wrap:wrap; }
+  .popup-fuel { font-size:.72rem; font-weight:500; padding:.15rem .4rem; background:#f0f2f5; }
+
+  /* RESPONSIVE */
+  /* AUTOCOMPLETE */
+  .autocomplete-box {
+    position:absolute; top:100%; left:0; right:0;
+    background:#fff; border:1px solid var(--border);
+    border-top:none; z-index:999; max-height:220px; overflow-y:auto;
+  }
+  .autocomplete-item {
+    padding:.65rem 1rem; font-size:.9rem; cursor:pointer;
+    border-bottom:1px solid var(--surface2);
+    display:flex; align-items:center; gap:.5rem;
+    transition:background .1s;
+  }
+  .autocomplete-item:hover { background:#f0f4ff; }
+  .autocomplete-item .city-icon { font-size:.85rem; }
+  .autocomplete-item .city-name { font-weight:500; }
+  .autocomplete-item .city-dept { font-size:.78rem; color:var(--muted); font-weight:300; }
+
+  /* STATION ICON on map */
+  .map-station-icon {
+    display:flex; flex-direction:column; align-items:center;
+    cursor:pointer;
+  }
+  .map-station-pin {
+    font-family:'Barlow Condensed',sans-serif; font-weight:800;
+    font-size:11px; padding:3px 6px 3px 6px;
+    box-shadow:0 2px 8px rgba(0,0,0,.25);
+    white-space:nowrap; color:white;
+    border:2px solid rgba(255,255,255,.8);
+    position:relative;
+  }
+  .map-station-pin::after {
+    content:'';
+    position:absolute; bottom:-7px; left:50%; transform:translateX(-50%);
+    border-left:6px solid transparent;
+    border-right:6px solid transparent;
+    border-top-width:7px; border-top-style:solid;
+  }
+  .map-station-pin.pin-cheap::after { border-top-color:#15803d; }
+  .map-station-pin.pin-mid::after   { border-top-color:#d97706; }
+  .map-station-pin.pin-exp::after   { border-top-color:#b91c1c; }
+
+
+  .btn-autoroute {
+    padding:0; border:none; cursor:pointer;
+    display:flex; align-items:stretch;
+    font-family:'Barlow Condensed',sans-serif;
+    overflow:hidden; transition:opacity .15s;
+    background:#f59e0b;
+  }
+  .btn-autoroute:hover { background:#d97706; }
+  .btn-autoroute img { height:42px; width:auto; display:block; flex-shrink:0; object-fit:contain; }
+  .btn-autoroute-text {
+    background:#f59e0b; color:white;
+    padding:0 1rem; display:flex; flex-direction:column; justify-content:center;
+    font-weight:700; font-size:.78rem; letter-spacing:.4px;
+    text-align:left; line-height:1.3; white-space:nowrap;
+  }
+  .btn-autoroute:hover .btn-autoroute-text { background:#d97706; }
+  .btn-autoroute.active, .btn-autoroute.active .btn-autoroute-text { background:#15803d; }
+  #btnElectrique:hover, #btnElectrique:hover .btn-autoroute-text { background:#15803d; }
+  #btnElectrique.active, #btnElectrique.active .btn-autoroute-text { background:#166534; }
+
+  .direction-modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,.5); z-index:2000; align-items:center; justify-content:center; }
+  .direction-modal.open { display:flex; }
+  .direction-box { background:#fff; padding:2rem; max-width:420px; width:90%; box-shadow:0 10px 40px rgba(0,0,0,.3); }
+  .direction-box h3 { font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:1.3rem; margin-bottom:.5rem; }
+  .direction-box p { font-size:.85rem; color:#666; margin-bottom:1.5rem; font-weight:300; }
+  .direction-grid { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; margin-bottom:1rem; }
+  .direction-btn { padding:1rem; border:2px solid #dde2ec; background:#f8faff; font-family:'Barlow Condensed',sans-serif; font-weight:700; font-size:1rem; cursor:pointer; transition:all .15s; text-align:center; }
+  .direction-btn:hover { border-color:#1d4ed8; background:#eff6ff; color:#1d4ed8; }
+  .direction-btn .dir-arrow { font-size:1.8rem; display:block; margin-bottom:.3rem; }
+  .direction-cancel { width:100%; padding:.6rem; border:1px solid #dde2ec; background:#fff; font-family:'Barlow',sans-serif; font-size:.85rem; cursor:pointer; color:#666; }
+
+  .autoroute-banner { display:none; background:#1d4ed8; color:white; padding:.6rem 1.5rem; font-size:.85rem; font-weight:500; align-items:center; gap:1rem; flex-wrap:wrap; }
+  .autoroute-banner.show { display:flex; }
+  .autoroute-banner strong { font-family:'Barlow Condensed',sans-serif; font-size:1rem; }
+  .autoroute-banner button { background:rgba(255,255,255,.2); border:1px solid rgba(255,255,255,.4); color:white; padding:.25rem .75rem; font-size:.78rem; cursor:pointer; }
+  .autoroute-banner button:hover { background:rgba(255,255,255,.3); }
+
+
+  /* ═══════════════════════════════════════
+     MOBILE — layout adaptatif
+  ═══════════════════════════════════════ */
+  @media (max-width: 768px) {
+
+    /* Header compact */
+    header {
+      height: 52px;
+      padding: 0 1rem;
+    }
+    .logo { font-size: 1.1rem; }
+    .header-right { display: none; }
+
+    /* Hero plus compact */
+    .hero {
+      padding: 1rem 1rem .8rem;
+    }
+    .hero h1 { font-size: 1.3rem; margin-bottom:.3rem; }
+    .hero p { font-size: .8rem; margin-bottom:.8rem; display:none; }
+
+    /* Search zone empilée */
+    .search-zone { gap: .5rem; }
+    .search-left { gap: .5rem; width:100%; }
+    .search-input-wrap { min-width: 0; max-width: none; flex:1; }
+    .search-input-wrap input { font-size: 1rem; padding: .7rem .8rem .7rem 2.2rem; border-radius:8px; }
+    .btn-geo {
+      padding: .7rem .9rem; font-size: .85rem; border-radius: 8px;
+      flex-shrink: 0;
+    }
+    .btn-search {
+      padding: .7rem 1.2rem; font-size: .95rem; border-radius: 8px;
+      flex-shrink: 0;
+    }
+    .search-right { gap: .4rem; width:100%; justify-content:center; }
+
+    /* Boutons autoroute + élec en ligne */
+    .btn-autoroute {
+      flex: 1;
+      max-width: 160px;
+      font-size: .75rem;
+    }
+
+    /* Fuel chips */
+    .fuel-chips { gap: .35rem; }
+    .fuel-chip { padding: .45rem .7rem; font-size: .82rem; border-radius:6px; }
+
+    /* ── Layout principal : carte plein écran ── */
+    .main-layout {
+      display: block;
+      height: calc(100vh - 52px);
+      position: relative;
+    }
+
+    /* Carte occupe tout l'écran */
+    #map {
+      position: absolute;
+      inset: 0;
+      height: 100% !important;
+      z-index: 0;
+    }
+
+    /* Bouton pour ouvrir/fermer la liste */
+    #mobileListToggle {
+      display: flex !important;
+    }
+
+    /* ── Bottom Sheet (liste des stations) ── */
+    .left-panel {
+      position: absolute;
+      bottom: 0;
+      left: 0; right: 0;
+      height: 55vh;
+      border-right: none;
+      border-top: 1px solid var(--border);
+      border-radius: 18px 18px 0 0;
+      box-shadow: 0 -4px 20px rgba(0,0,0,.15);
+      z-index: 900;
+      transform: translateY(100%);
+      transition: transform .35s cubic-bezier(.4,0,.2,1);
+    }
+    .left-panel.open {
+      transform: translateY(0);
+    }
+    /* Poignée drag */
+    .left-panel::before {
+      content: '';
+      display: block;
+      width: 40px; height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      margin: 8px auto 4px;
+      flex-shrink: 0;
+    }
+
+    /* Stats bar en bas */
+    .stats-bar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      flex-wrap: wrap;
+      padding: .4rem .8rem;
+      font-size: .72rem;
+      z-index: 800;
+    }
+    .stats-bar.with-panel {
+      bottom: 55vh;
+    }
+
+    /* ── Barre de navigation mobile en bas ── */
+    .mobile-nav {
+      display: flex !important;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: 58px;
+      background: #fff;
+      border-top: 1px solid var(--border);
+      z-index: 1100;
+      box-shadow: 0 -2px 12px rgba(0,0,0,.1);
+    }
+    .mobile-nav-btn {
+      flex: 1;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 2px;
+      font-size: .62rem; font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      border: none; background: none;
+      transition: color .15s;
+      font-family: 'Barlow', sans-serif;
+    }
+    .mobile-nav-btn.active { color: var(--accent); }
+    .mobile-nav-btn .nav-icon { font-size: 1.3rem; }
+    
+    /* Décaler la carte pour la nav bar */
+    #map, .main-layout { padding-bottom: 58px; }
+
+    /* Banner autoroute */
+    .autoroute-banner {
+      bottom: 58px !important;
+      top: auto !important;
+      font-size: .78rem;
+      flex-wrap: wrap;
+      gap: .3rem;
+      padding: .5rem .8rem;
+    }
+
+    /* Hero caché sur mobile après recherche */
+    .hero.hidden-mobile { display: none; }
+
+    /* Carte zoomControl repositionné */
+    .leaflet-top.leaflet-right { top: 8px !important; right: 8px !important; }
+    .leaflet-control-zoom { border-radius: 8px !important; }
+
+    /* Sort bar */
+    .sort-bar { padding: .4rem .8rem; gap: .4rem; }
+    .sort-btn { padding: .3rem .65rem; font-size: .78rem; border-radius:6px; }
+
+    /* Cards dans le panel */
+    .station-card { padding: .65rem .9rem !important; }
+  }
+
+  /* Éléments cachés sur desktop, visibles sur mobile */
+  #mobileListToggle { display: none; }
+  .mobile-nav { display: none; }
+
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><span style="filter:hue-rotate(100deg) saturate(1.5)">⛽</span> Carbu<span>France</span></div>
+  <div class="header-right" id="headerStatus">Données officielles prix-carburants.gouv.fr</div>
+</header>
+
+<div class="hero">
+  <h1>Trouvez le carburant <em>le moins cher</em> près de chez vous</h1>
+  <p>11 000 stations en France · Données officielles du gouvernement · Mises à jour en temps réel</p>
+
+  <div class="search-zone">
+    <div class="search-left">
+      <div class="search-input-wrap" style="position:relative">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="cityInput" placeholder="Ville, code postal..."
+          onkeydown="handleCityKey(event)"
+          oninput="onCityInput(this.value)"
+          autocomplete="off">
+        <div class="autocomplete-box" id="autocompleteBox" style="display:none"></div>
+      </div>
+      <button class="btn-geo" onclick="geolocate()">📍 Me localiser</button>
+      <button class="btn-search" onclick="doSearch()">Rechercher</button>
+    </div>
+    <div class="search-right" style="display:flex;gap:.5rem;">
+    <button class="btn-autoroute" id="btnAutoroute" onclick="toggleAutorouteMode()">
+      <img src="data:image/jpeg;base64,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" alt="autoroute"/>
+      <span class="btn-autoroute-text"><span>STATIONS</span><span>AUTOROUTE</span></span>
+    </button>
+    <button class="btn-autoroute" id="btnElectrique" onclick="toggleElectriqueMode()" style="background:#16a34a">
+      <img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBwgHBgkIBwgKCgkLDRYPDQwMDRsUFRAWIB0iIiAdHx8kKDQsJCYxJx8fLT0tMTU3Ojo6Iys/RD84QzQ5OjcBCgoKDQwNGg8PGjclHyU3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3N//AABEIAJQAmQMBEQACEQEDEQH/xAAcAAEAAgMBAQEAAAAAAAAAAAAABgcBAggEBQP/xABPEAAABQEDBQsGCAoLAAAAAAAAAQIDBAUGERcHVHGT0RITITEyMzVRdJGyFEFVYZSiFSU2gaGxwdIiIyRTY2Ryc4LCJkJERVJig5Kzw+L/xAAbAQEAAwEBAQEAAAAAAAAAAAAAAQUGBAcDAv/EADkRAAIBAgIGCAQFBAMBAAAAAAABAgMEBRURMVFSkaEGEhYzNGFxsRMhcsEUMkGB0SIj8PFCU+FD/9oADAMBAAIRAxEAPwC8D4gBGZtu6DDlvRXpLhuMrNC9w0ZkRlxleLKlhF3VgpxXyfmcc7+hCTi2fhiJZ3OH9QofTJLzYuJ+Mxt9vIYiWdzh/UKDJLzYuIzG328hiJZ3OH9QoMkvNi4jMbfbyGIlnc4f1CgyS82LiMxt9vIYiWdzh/UKDJLzYuIzG328hiLZ3OH9QoMkvNi4jMbfbyGIlns4f1CgyS82LiMxt9vIYiWdzh/UKDJLzYuIzG328hiJZ3OH9QoMkvNi4k5jb7eQxEs9nD+oUGSXmxcSMxt9vIYiWezh/UKDJLzYuIzG328hiJZ3OH9QoMkvNi4jMbfbyGIlnc4f1Bhkl5sXEZjb7eQxEs7nD+oUGSXmxcRmNvt5DESzucP6gwyS82LiMxt9vIynKHZ1SiLyp1N53XqZURFpEPBbxLT1VxJWI27ejSStB3leKo7jYABDBz1aDp+p9se8ah6JaeHp/SvZGUue+l6s8A6D4AAAAAGyEmtRJTxmdxCJPQtJMVpaSLLbyWMmgjVVHCUZcJbyXAfeMv2glp+VNcS7yqOj8x8q1Fg2qFRX6gmet42zSW4NsivvURdfrHVY4vK5rqn1NGnzPhc2EaNJzUiDi/Kol9jbGt2kp78lc1TBtvb3uSbJV/4JHfx+sUuJYm7OqoKOnStJY2dlGvByb0H38K2C/vV3UltFe+kE/wDrXE68qjvFd1SGdPqUqGpW6Nh1Te667j4xpbeqqtKNRfqiorU/h1HDYeUfU+QAAAABhXJPQYlayVrOk2ubToIeZs2CNgJAhg56tB0/U+2PeNQ9EtPD0/pXsjKXPfS9WeAdB8AAAAAD6VnIxzLQU2PdeS5Le6L/ACkZGf0EY5r2p8O2nLyZ97aPWrRXmdApHnhqyKZTjushKLrcbL3yFtgvjY+j9jhxDw7KXG2M2WtkgP4mnF1Sr/dIZPpB38PT7svsK7p+pPTFAWhSGUSN5Na+dwXJd3DifnSV/wBJGNvhFTrWcPLSuZm8Qh1biXmRsWhwgAAAAGFck9BiVrJWs6Ta5tOgh5mzYI2AkwfEAOe6/wBP1Ttj3jMeh2nh6f0r2Mncd9L1PAOg+IAAAABKsmcfyi10c7ryZbW6fq4LvrUQqMZn1LSXm0v84FhhsdNdPYXUMWaIiGVI7rJu+t5v6xb4H87xejODEfDspobQzhaeR8/iyoF+sJ8IynSFf3Yen3L7Cu7l6lgjPloVRlejb3WYcgiuJ5g039ZpP/0Q1fR+emjOOx+/+ijxWOicZeRAhoCpAAAAAMK5J6DErWStZ0m1zadBDzNmwRsBIMAc9Wg6fqnbHvGoeh2nh6f0r2RlLnvperPAOg+AAAAABYOR+LuqjUJZlyGUtpP9o7z8JDO9IKminCG16f8AOJb4VH+qUi0xli7IdlU+SqvXIb+0XGB+L/ZnBiPh2U4NmZwtDI8f5DUS/TIP3TGW6Q95D0Ze4V3cvUsQZ0tSv8r8bfKZAlEXCy+pBn1EpO1JC/wCpoqzhtWngyqxWOmmpbCqxrCiAAAAAMK5J6DErWStZ0m1zadBDzNmwRsBIEMHPVoOn6n2x7xqHolp4en9K9kZS576XqzwDoPgAAAAATCxFrYdm4clqRFfecedJW6bMriSRERFw+u8UuJ4bVvKkZRkkkvuWVleQt4NSWskuKNO9HzO9G0VvZ+tvrmdma0t1nwbY21iV+kFCjxZDS99SvdOGm64r+od2HYTUta3xJST+Ry3d/CtT6iTIQL4qyW2HtZGs2zKbkxnnjfUlRG2ZcF1/WKfE8NneSi4tLQWNleRt4tSWslGKNO9HzO9G0VfZ+tvrmdua0t1nxLXW3gV+iuQmoclt01pWhazTcRkfDfcfVeOywwmra11Uck18zmur+nWpOCT0kFGgKoAAAAAwrknoMStZK1nSbXNp0EPM2bBGwEgQwUNIpztWtlMgMKQhx+c+lKl8RXKUfD3Dexrq3so1GtUV7IzMqTq3MoJ62z7+GFVz2F3q2Dg7QW+6+R05VPeQwwquewu9WwO0FvuvkMqnvIYYVXPYXerYHaC33XyGVT3kMMKrnsLvVsDtBb7r5DKp7yGGFVz2F3q2B2gt918hlU95DDCq57C71bA7QW+6+Qyqe8hhhVc9hd6tgdoLfdfIZVPeQwwquewu9WwO0FvuvkMqnvIYYVXPYXerYHaC33XyGVT3kMMKrnsLvVsDtBb7r5DKp7yGGFVz2F3q2B2gt918hlU95DDCq57C71bA7QW+6+Qyqe8hhhVc9hd6tgdoLfdfIZVPeQwwquewu9WwO0FvuvkMqnvIYYVXPYXerYHaC33XyGVT3kRe0lEkUCd5FKcbccNonN03fdcd5efQLOyvI3cPiQWhadBx3Fu6E1FvSdANc2nQQ8/ZqEbASBDBSEWcxTMoD02Wo0sMz3zWZJvMivWXF843FSjOth6pwXzcY/Yzsakad25S1JssLEKzmdPahewZ14Le7vNFpmNvtJHTp0WpRES4TqXmF8laRXVaU6U3Ca0NHXCcZx60X8j9ZDrUdlbry0NtoK9S1HcRF6zH5jFyfVS0s/TaS0sjLmUCziFqQcxxVx3bpDCjI/nuFlHBr1rT1eaOR4hbp6NJriFZvOXtQvYJyS83eaIzC328hiFZzOXvZ17AyS82LihmFvt5DEKzecvezr2Bkt5sXFEZjb7RiFZvOXtQvYJyS93eaJzG32jEKzecvezr2CMlvNi4oZhb7RiFZvOXvZ17BOS3m6uKGYW+3kMQrN5y97OvYGS3m6uKGY2+3kCyg2cNRF5U6V58ZsL2D85LebvNDMLfaSSDNiz4yJMN5t9lfJWg7yMV1SnOlJwmtDOuE4zj1ov5H6SXmozC331pbabSalrUdxJIvOPzGMpyUYrS2TKSitL1EYVlBs2lRl5W6dx8ZMLuP6BaLBb1rT1eaOPMLfaVzb6rw63W/K4C1LZKOlF6kGk90Rqv49JDR4TbVLah1Ki+en+Covq0K1VSgXg1zadBDDs0aNgJAhg56tB0/U+2PeNQ9EtPD0/pXsjKXPfS9WeAfdnwLlyWfJNv9+59YxmN+LfojSYd4dfufnlUkbzZjet1dv76EXdZFer7BOBw613p2Jn5xKWih6lU0mJ8IVWHDvMifeQ2ZlxkRmRGfcNZc1Pg0ZVNiKKjD4k1DaWYWS2l3dITfc+6Mz2gr7q5/yXWV0trGFtL9ITfc+6HaCvurn/ACMrpbXyI1biyESzkGPIiyZDqnXt7MndzcRbkz8xF1CywzEql3UlGSS0LT+px3tnChBSiyGi7KwlFhrMxrSvzG5Uh5ko6UKTvV3DeZ8d5H1CpxS+nZqLgk9OnXp/Q77G1jX09b9CX4W0v0hN9z7oqO0FfdXP+SwyultfIYW0v0hN9z7odoK+6uf8jK6W1lfWopKaHXJNPbWtxtvcmha7r1EaSPzcHnMhoLG4dzQjVa0NlTdUVRquCJxkfkGqJUY1/IcQ4RdV5XfYKLpDT0ThPyaLPCpaYSiSq2/yTqn7gxWYb4un6ndd9xL0KIG8RljVXJPQY/S1hazpNrm06CHmbNgjYCTBgDnu0HT9U7Y941D0O08PT+leyMncd9L1Z4B0M+Ra2TmtUqBZlDE2oxWHSeWe4cdJJ3X9RjJ4va16t05Qg2tC1IvrCtTjQSlJI+ZlTrMGoRafHp8xiSROLcXvLhK3NxERX3ftH3DpwK1q0pzlUi18kvmv82HwxOtCcYxi9J8PJxG8otbEM+JlK3O5Jl9o78ZqdSzl56EcuHR61wvIu0uIYg0gAFf5YD+K4BfrJn7pjQdHu+n6fcq8V7pepVY1ZQlhZHT/AC+pl+ib+sxnOkP5Kfq/sXGE65/sWkMuXQAFR5Wo2916NILiejkn50me0a3o/PTbyhsfuUWKw0VIy2o/PJfVItNqsxM6S1HadYv3bqySRqSorivPz3KPuH7xy2qVqUXTTbT/AE81/wCH5w2rGE5KT0EytfX6PKszUWI1UhuurZMkoQ8kzUfqK8U2H2dxC6hKVNpJ7GWVzXpOjJKS1bSmRtEZowrknoMStZK1nSbXNp0EPM2bBGwEgQwc9Wg6fqfbHvGoeiWnh6f0r2RlLnvperPAOg+AAAAT7JDH3dTqEn82wlBfxHf/ACjPdIZ/2oQ2v2/2W2FR/qlItYhlS8AArvLCf5DTU9byz+gto0PR7vKj8kVWK/kj6lXjVFET/I+d1UqBdbCT94Z7pD3UPX7FvhP5pFqjKl2ABXmWCNuqfTpX+B5Tf+5N/wDKNB0eqaKk4bVp4f7KrFY/0Rl5lXDVlEAAAGFck9BiVrJWs6Ta5tOgh5mzYI2AkCGDnq0HT9T7Y941D0S08PT+leyMpc99L1Z4B0HwAAAyS2MkUfcUSXIMuF2RufmJJbRkcfnprxjsXuy+wuOik5bWTwURZgAVvljV+KpSL+NTp9xJ2jSdHl/VUfp9yoxZ/KK9SsxpykJ5kgP46nJ64xH7xCg6QL+zD1+xa4U/65ehbAyZegARXKXG3+yMpRcbK0Oe8RfaLTBp9W8itulHFiEetbspUbdGbYAgADCuSegxK1krWdJtc2nQQ8zZsEbASBDBz1aDp+p9se8ah6JaeHp/SvZGUue+l6s8A6D4AAAZJeGTyN5NZGAR8bhKcP8AiUZ/VcMLitTr3k/L5cEaaxj1aESSCuOsACtMsnKo/wDr/wDWNL0d/wDr+33KfFv+H7/YrYaYpScZIj/pHJLrhqP30Ci6QeGj9X2ZaYV3r9PuW4MiXwAHzrRRvLKDUI3ncjrSWncncPva1Ph14S2NHyrR61OUfI58LhIeiIyYAgADCuSegxK1krWdJtc2nQQ8zZsEbASBDBz1aDp+p9se8ah6JaeHp/SvZGUue+l6s8A6D4AAD4j84Eo6JpMbyOmxY35plCD0kREPOa1T4lWU9rZrqcerFI9Y+R+wAKyyyH+No5dSXz/4xpujuqp+33KfFtUP3+xXA0pSk2yR/KeR2JfjbFHj/hV9S9mWmFd6/T7lvDIF8ABqsiNNx8JHxgGc7VJg4tRlxj42X1t9yjL7B6NQn16UZ7UmZGtHq1JR8zzD6nzAAwrknoMStZK1nSbXNp0EPM2bBGwEgQwc9Wg6fqfbHvGoeiWnh6f0r2RlLnvperPAOg+AAHvoUbyutwI/5yQgj0XleOe7qfDoTnsTPtbx61WK8zoQvOPPDWGQAAFX5Yz/ACulF+jdP6UDUdHfy1PVfcpsW/4ldjRlMTXJKd1qHi64S/G2KTH/AAq+pezLPCu+foW+MeX4AGDAFG2+jeTWtqCeAicUThfxERjc4TU69nDy+Rmr+HVuJeZHhZHEABhXJPQYlayVrOk2ubToIeZs2CNgJMGAOe7QdP1Ttj3jUPQ7Tw9P6V7Iylx30vVngHQfAACT5N43lNr4Z/1WUrcP5kmRfSZCqxip1LOS26FzO/DodauvIuwiuGJNGZAAAVZlhO+o00uplfiIano93dT1RSYtriV8NEVBMsk53WqX64jniQKXHvCfuvuWWF98/QuIY40AAAAVJlcjb3X40gi/BejEk9KVH9hkNZgFTTQlHY/fR/BRYrDRUUtqIML8qgAMK5J6DErWStZ0m1zadBDzNmwRsBJgwBz3aDp+qdse8ah6HaeHp/SvZGUuO+l6s8A6D4AATjJS7EjVSbJlyGGNyylCTdWSbzUfmv8A2RQ46pypRhBN/P8ATy/2WuGOMZScnoLN+G6T6The0I2jM/ha+4+DLj41LeXEfDdJ9JwvaEbQ/C19x8GPjUt5cR8N0r0nC9oRtD8LX3HwY+NS3kVllWmRpdUgqiyGnkpYMjNpZKIj3XqGmwKnOFKfXTXz+xT4pOMpR6r0kHF8VRK8mcliJaffJLzbKDjrTunFEkuMvOegVGNwlO10RWl6UWOGyUa2lv8AQtr4bpPpOF7QjaMl+Fr7j4MvPjUt5cR8N0r0nC9oRtD8LX3HwY+NS3kPhqlek4XtCNofha+4+DHxqW8uJAsq8iFMhQHokuO+tt1SDJt1KjIjK+/gPi/B+kXuBQqU6k4yi1pS/QrMTlCUIuL0/MrcacpQAMK5J6DErWStZ0m1zadBDzNmwRsBJg+IQwVHWrBV6RV5r8dplxp6QtxCt9IuBSjPiPSNdbYzaxoxjJtNJLVs+RRVsOrSqOS/U8WHto82Z16R0Z3Z7eTPlllwMPbR5szr0hndnt5MZZcDDy0Z/wBmZ16RGdWe8+DGWV9gw8tHmrGvSGd2e8+DGW3Aw8tHmrOvSGdWe8+DGW3Aw8tHmrGvSJzuz3nwYy24GHlo82Z16RGdWe18GMtr7Bh7aPNmdekTndnt5MZbcDDy0ebM69IjOrPa+DGW3Aw8tHmrGvSGd2e8+DGW3Aw8tHmrGvSGd2e8+DGWXAw8tHmrOvSGd2e8+DGWXAw8tHmrOvSGd2e8+DGW3Aw9tHmzOvSJzuz3uTGWXAw9tHmzOvSGd2e3kxltwZTk7tEtRJUwwgj4DUbxHd6+AfmWOWiWlN8CVhlfSXO3wIIj8xXDGGhNgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf/9k=" alt="autoroute"/>
+      <span class="btn-autoroute-text" style="background:#16a34a"><span>BORNES</span><span>ÉLECTRIQUES</span></span>
+    </button>
+    </div>
+  </div>
+
+  <div style="margin-top:1rem">
+    <div class="fuel-chips" style="align-items:center">
+      <span style="font-size:1rem;color:var(--text);font-weight:600;white-space:nowrap;margin-right:.25rem">Sélectionnez votre type de carburant :</span>
+      <span class="fuel-chip active" onclick="selectFuel('Gazole',this)">Gazole</span>
+      <span class="fuel-chip" onclick="selectFuel('SP95-E10',this)">SP95-E10</span>
+      <span class="fuel-chip" onclick="selectFuel('SP98',this)">SP98</span>
+      <span class="fuel-chip" onclick="selectFuel('E85',this)">E85</span>
+      <span class="fuel-chip" onclick="selectFuel('GPLc',this)">GPL</span>
+    </div>
+  </div>
+</div>
+
+<!-- MODALE DIRECTION -->
+<div class="direction-modal" id="directionModal">
+  <div class="direction-box">
+    <h3>🛣️ Stations Autoroute</h3>
+
+    <!-- Ville de départ -->
+    <div style="margin-bottom:.8rem">
+      <label style="font-size:.78rem;font-weight:600;color:#374151;display:block;margin-bottom:.3rem">VILLE DE DÉPART</label>
+      <div style="display:flex;gap:.4rem">
+        <input type="text" id="autorouteCityInput" placeholder="Ex: Lyon, Marseille..."
+          style="flex:1;padding:.55rem .8rem;border:1.5px solid #d1d5db;font-size:.9rem;outline:none"
+          onkeydown="if(event.key==='Enter') confirmAutorouteCity()"
+        />
+        <button onclick="confirmAutorouteCity()"
+          style="padding:.55rem 1rem;background:#1d4ed8;color:white;border:none;cursor:pointer;font-size:.85rem;font-weight:600;white-space:nowrap">
+          ✓ OK
+        </button>
+      </div>
+    </div>
+    <p id="autorouteCityStatus" style="font-size:.8rem;color:#6b7280;min-height:1.2rem;margin-bottom:.8rem"></p>
+
+    <!-- Destination -->
+    <div style="margin-bottom:.8rem">
+      <label style="font-size:.78rem;font-weight:600;color:#374151;display:block;margin-bottom:.3rem">VILLE DE DESTINATION</label>
+      <div style="display:flex;gap:.4rem">
+        <input type="text" id="autorouteDestInput" placeholder="Ex: Paris, Bordeaux..."
+          style="flex:1;padding:.55rem .8rem;border:1.5px solid #d1d5db;font-size:.9rem;outline:none"
+          onkeydown="if(event.key==='Enter') confirmAutorouteDest()"
+        />
+        <button onclick="confirmAutorouteDest()"
+          style="padding:.55rem 1rem;background:#15803d;color:white;border:none;cursor:pointer;font-size:.85rem;font-weight:600;white-space:nowrap">
+          🚗 Go
+        </button>
+      </div>
+      <p id="autorouteDestStatus" style="font-size:.8rem;color:#6b7280;min-height:1.2rem;margin-top:.4rem"></p>
+    </div>
+
+    <button class="direction-cancel" onclick="closeDirectionModal(); if(!userLat) toggleAutorouteMode()">Annuler</button>
+  </div>
+</div>
+<!-- MODALE BORNES ÉLECTRIQUES -->
+<div class="direction-modal" id="electriqueModal">
+  <div class="direction-box">
+    <h3 style="color:#15803d">⚡ Bornes Électriques Autoroute</h3>
+    <p style="font-size:.82rem;color:#6b7280;margin:.3rem 0 1rem;font-weight:300">Bornes de recharge sur les aires d'autoroute de votre trajet.</p>
+    <div style="margin-bottom:.8rem">
+      <label style="font-size:.78rem;font-weight:600;color:#374151;display:block;margin-bottom:.3rem">VILLE DE DÉPART</label>
+      <div style="display:flex;gap:.4rem">
+        <input type="text" id="elecCityInput" placeholder="Ex: Lyon, Marseille..."
+          style="flex:1;padding:.55rem .8rem;border:1.5px solid #d1d5db;font-size:.9rem;outline:none"
+          onkeydown="if(event.key==='Enter') confirmElecCity()"/>
+        <button onclick="confirmElecCity()" style="padding:.55rem 1rem;background:#1d4ed8;color:white;border:none;cursor:pointer;font-size:.85rem;font-weight:600;white-space:nowrap">✓ OK</button>
+      </div>
+      <p id="elecCityStatus" style="font-size:.8rem;color:#6b7280;min-height:1.2rem;margin-top:.4rem"></p>
+    </div>
+    <div style="margin-bottom:.8rem">
+      <label style="font-size:.78rem;font-weight:600;color:#374151;display:block;margin-bottom:.3rem">VILLE DE DESTINATION</label>
+      <div style="display:flex;gap:.4rem">
+        <input type="text" id="elecDestInput" placeholder="Ex: Paris, Bordeaux..."
+          style="flex:1;padding:.55rem .8rem;border:1.5px solid #d1d5db;font-size:.9rem;outline:none"
+          onkeydown="if(event.key==='Enter') confirmElecDest()"/>
+        <button onclick="confirmElecDest()" style="padding:.55rem 1rem;background:#15803d;color:white;border:none;cursor:pointer;font-size:.85rem;font-weight:600;white-space:nowrap">⚡ Go</button>
+      </div>
+      <p id="elecDestStatus" style="font-size:.8rem;color:#6b7280;min-height:1.2rem;margin-top:.4rem"></p>
+    </div>
+    <button class="direction-cancel" onclick="document.getElementById('electriqueModal').classList.remove('open')">Annuler</button>
+  </div>
+</div>
+<div class="autoroute-banner" id="autorouteBanner">
+  <span>🛣️ <strong>Mode Autoroute</strong></span>
+  <span id="bannerDirection">—</span>
+  <button onclick="changeDirection()">🔄 Changer de sens</button>
+  <button onclick="toggleAutorouteMode()">✕ Quitter</button>
+</div>
+
+<!-- BOUTON FLOTTANT LISTE (mobile) -->
+<button id="mobileListToggle" onclick="toggleMobilePanel()" style="display:none;position:fixed;bottom:70px;right:14px;z-index:950;background:var(--accent);color:#fff;border:none;border-radius:50%;width:52px;height:52px;font-size:1.3rem;box-shadow:0 3px 12px rgba(0,0,0,.3);cursor:pointer;align-items:center;justify-content:center;">
+  📋
+</button>
+
+<!-- NAVIGATION MOBILE EN BAS -->
+<nav class="mobile-nav" id="mobileNav">
+  <button class="mobile-nav-btn active" id="navMap" onclick="mobileNavTo('map')">
+    <span class="nav-icon">🗺️</span>
+    <span>Carte</span>
+  </button>
+  <button class="mobile-nav-btn" id="navList" onclick="mobileNavTo('list')">
+    <span class="nav-icon">📋</span>
+    <span>Stations</span>
+  </button>
+  <button class="mobile-nav-btn" id="navSearch" onclick="mobileNavTo('search')">
+    <span class="nav-icon">🔍</span>
+    <span>Recherche</span>
+  </button>
+  <button class="mobile-nav-btn" id="navAutoroute" onclick="toggleAutorouteMode(); mobileNavActivate('navAutoroute')">
+    <span class="nav-icon">🛣️</span>
+    <span>Autoroute</span>
+  </button>
+  <button class="mobile-nav-btn" id="navElec" onclick="toggleElectriqueMode(); mobileNavActivate('navElec')">
+    <span class="nav-icon">⚡</span>
+    <span>Électrique</span>
+  </button>
+</nav>
+
+<div class="main-layout">
+  <!-- LEFT PANEL -->
+  <div class="left-panel">
+    <div class="panel-header">
+      <h2 id="panelTitle">Stations trouvées</h2>
+      <span class="result-count" id="resultCount">—</span>
+    </div>
+    <div class="sort-bar">
+      <span class="sort-label">Trier par :</span>
+      <button class="sort-btn active" onclick="sortBy('prix',this)">Prix ↑</button>
+      <button class="sort-btn" onclick="sortBy('distance',this)">Distance</button>
+      <button class="sort-btn" onclick="sortBy('nom',this)">Nom</button>
+    </div>
+    <div class="stations-list" id="stationsList">
+      <div class="state-box">
+        <div class="icon" style="filter:hue-rotate(100deg) saturate(1.5)">⛽</div>
+        <p>Entrez une ville ou utilisez<br>la géolocalisation pour trouver<br>les stations près de vous.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAP -->
+  <div id="map"></div>
+</div>
+
+<!-- STATS BAR -->
+<div class="stats-bar" id="statsBar" style="display:none">
+  <div class="stats-bar-item">
+    <span class="stats-bar-label">Prix le moins cher</span>
+    <span class="stats-bar-value green" id="statMin">—</span>
+  </div>
+  <div class="stats-bar-item">
+    <span class="stats-bar-label">Prix le plus cher</span>
+    <span class="stats-bar-value red" id="statMax">—</span>
+  </div>
+  <div class="stats-bar-item">
+    <span class="stats-bar-label">Prix moyen</span>
+    <span class="stats-bar-value blue" id="statAvg">—</span>
+  </div>
+  <div class="stats-bar-item">
+    <span class="stats-bar-label">Économie possible</span>
+    <span class="stats-bar-value green" id="statSave">—</span>
+  </div>
+  <div class="stats-bar-item">
+    <span class="stats-bar-label">Stations trouvées</span>
+    <span class="stats-bar-value" id="statCount">—</span>
+  </div>
+  <div style="margin-left:auto;font-size:.75rem;color:var(--muted);font-weight:300" id="dataSource"></div>
+</div>
+
+<script>
+// ── State ──
+let selectedFuel = 'Gazole';
+let allStations = [];
+let filteredStations = [];
+let searchedVille = '';
+let currentRadius = 5000;
+let map, markersLayer;
+let currentSort = 'prix';
+let userLat = null, userLng = null;
+let searchedCP = null;
+let autorouteMode = false;
+let autorouteDirection = null;
+let autorouteDestMode = false;
+let prevLat = null, prevLng = null;
+let destLat = null, destLng = null, destName = '';
+let routeLines = [];
+
+// ── Init Map ──
+map = L.map('map', { zoomControl:true }).setView([46.6, 2.4], 6);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution:'© OpenStreetMap',
+  maxZoom:19
+}).addTo(map);
+markersLayer = L.layerGroup().addTo(map);
+
+// ── Fuel selection ──
+function selectFuel(fuel, el) {
+  selectedFuel = fuel;
+  document.querySelectorAll('.fuel-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  if (filteredStations.length) renderResults(filteredStations);
+}
+
+// ── Geolocation ──
+function geolocate() {
+  searchedCP = null;
+  searchedVille = '';
+  currentRadius = 15000;
+  if (!navigator.geolocation) { alert("Géolocalisation non supportée."); return; }
+  showLoading("Localisation en cours...");
+  navigator.geolocation.getCurrentPosition(pos => {
+    userLat = pos.coords.latitude;
+    userLng = pos.coords.longitude;
+    document.getElementById('cityInput').value = '';
+    fetchByCoords(userLat, userLng, 15000);
+  }, (err) => {
+    let msg = "Localisation refusée. ";
+    if (err.code === 1) msg += "Autorisez la localisation dans Réglages > Confidentialité > Service de localisation.";
+    else if (err.code === 2) msg += "Position indisponible. Tapez votre ville manuellement.";
+    else msg += "Tapez votre ville dans la barre de recherche.";
+    showEmpty(msg);
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+}
+
+// ── Grandes villes avec arrondissements ──
+const GRANDES_VILLES = {
+  'paris': { cpStart: '75', label: 'Paris' },
+  'lyon': { cpStart: '69', label: 'Lyon' },
+  'marseille': { cpStart: '13', label: 'Marseille' },
+};
+
+// ── Search by city ──
+async function doSearch() {
+  const city = document.getElementById('cityInput').value.trim();
+  if (!city) { geolocate(); return; }
+
+  // Détecter si l'utilisateur tape juste "Paris", "Lyon" ou "Marseille" sans arrondissement
+  const cityLower = city.toLowerCase().trim();
+  const grandeVille = GRANDES_VILLES[cityLower];
+  if (grandeVille) {
+    showEmpty(`${grandeVille.label} est une grande ville. Veuillez préciser l'arrondissement, ex: "${grandeVille.label} 8" ou "${grandeVille.label} 75008".`);
+    return;
+  }
+
+  showLoading("Recherche de " + city + "...");
+  try {
+    // Si la saisie contient un CP (5 chiffres), on cherche par postalcode pour centrer précisément sur l'arrondissement
+    const cpMatch = city.match(/\b(\d{5})\b/);
+    const nominatimUrl = cpMatch
+      ? `https://nominatim.openstreetmap.org/search?postalcode=${cpMatch[1]}&country=France&format=json&limit=1&addressdetails=1`
+      : `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city+', France')}&format=json&limit=1&addressdetails=1`;
+    const geoRes = await fetch(nominatimUrl);
+    const geoData = await geoRes.json();
+    if (!geoData.length) { showEmpty("Ville non trouvée. Essayez avec un code postal."); return; }
+    const lat = parseFloat(geoData[0].lat);
+    const lng = parseFloat(geoData[0].lon);
+    userLat = lat; userLng = lng;
+    searchedCP = geoData[0].address?.postcode || null;
+    searchedVille = (geoData[0].address?.city || geoData[0].address?.town || geoData[0].address?.village || '').toUpperCase();
+
+    // Détecter si le résultat est un arrondissement (CP de grande ville)
+    const isArrondissement = searchedCP && (
+      searchedCP.startsWith('75') || searchedCP.startsWith('69') || searchedCP.startsWith('13')
+    ) && searchedCP.length === 5;
+
+    // Rayon : arrondissement = calculé depuis bounding box, sinon 5km
+    let searchRadius = 5000;
+    if (geoData[0].boundingbox) {
+      const bb = geoData[0].boundingbox.map(Number);
+      const latDist = haversine(bb[0], bb[2], bb[1], bb[2]);
+      const lngDist = haversine(bb[0], bb[2], bb[0], bb[3]);
+      const citySize = Math.max(latDist, lngDist);
+      searchRadius = Math.min(Math.round(citySize * 0.7), 20000);
+      searchRadius = Math.max(searchRadius, 3000);
+    }
+    currentRadius = searchRadius;
+
+    map.setView([lat, lng], isArrondissement ? 15 : 14);
+    showCityMarker(lat, lng, city);
+    fetchByCoords(lat, lng, searchRadius);
+  } catch(e) {
+    showEmpty("Erreur de recherche. Vérifiez votre connexion.");
+  }
+}
+
+// ── Fetch brand names from OpenStreetMap Overpass API ──
+async function fetchBrandsFromOSM(lat, lng, radius) {
+  try {
+    const query = `[out:json][timeout:10];node["amenity"="fuel"](around:${radius},${lat},${lng});out body;`;
+    const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
+    const data = await res.json();
+    // Build a map: coords -> brand name
+    const brandMap = {};
+    if (data.elements) {
+      data.elements.forEach(el => {
+        if (el.lat && el.lon) {
+          const key = `${el.lat.toFixed(4)}_${el.lon.toFixed(4)}`;
+          brandMap[key] = el.tags?.brand || el.tags?.name || el.tags?.operator || null;
+        }
+      });
+    }
+    return brandMap;
+  } catch(e) {
+    console.warn('OSM fetch failed', e);
+    return {};
+  }
+}
+
+// ── Fetch stations from gouvernement API ──
+async function fetchByCoords(lat, lng, radius) {
+  radius = radius || currentRadius || 5000;
+  showLoading("Chargement des stations...");
+  try {
+    // Augmenter le rayon sur mobile pour compenser le GPS approximatif
+    const searchRadius = Math.max(radius, 8000);
+    const url = `https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/prix-des-carburants-en-france-flux-instantane-v2/records?where=within_distance(geom,geom'POINT(${lng} ${lat})',${searchRadius}m)&limit=100&timezone=Europe%2FParis`;
+    
+    // Timeout de 15 secondes pour mobile
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    let res, brandMap;
+    try {
+      [res, brandMap] = await Promise.all([
+        fetch(url, { signal: controller.signal }),
+        fetchBrandsFromOSM(lat, lng, searchRadius)
+      ]);
+      clearTimeout(timeout);
+    } catch(fetchErr) {
+      clearTimeout(timeout);
+      if (fetchErr.name === 'AbortError') {
+        showEmpty("La connexion est trop lente. Réessayez dans quelques secondes.");
+        return;
+      }
+      throw fetchErr;
+    }
+
+    if (!res.ok) {
+      showEmpty(`Erreur API (${res.status}). Vérifiez votre connexion internet.`);
+      return;
+    }
+    const data = await res.json();
+    
+    if (!data.results || !data.results.length) {
+      // Réessayer avec un rayon plus grand
+      if (searchRadius < 30000) {
+        showLoading("Élargissement de la recherche...");
+        return fetchByCoords(lat, lng, 30000);
+      }
+      showEmpty(`Aucune station trouvée dans un rayon de ${Math.round(searchRadius/1000)} km. Essayez une autre ville.`);
+      return;
+    }
+
+    // Parse stations
+    allStations = data.results.map(s => {
+      const prices = {};
+
+      // Try all known price field formats from the API
+      const fuelMap = {
+        'Gazole': ['gazole_prix', 'gazole'],
+        'SP95-E10': ['sp95_prix', 'sp95', 'sp95_e10_prix', 'sp95_e10', 'e10_prix', 'e10'],
+        'SP98':   ['sp98_prix', 'sp98'],
+        'E85':    ['e85_prix', 'e85'],
+        'GPLc':   ['gplc_prix', 'gplc', 'gpl_prix', 'gpl']
+      };
+      Object.entries(fuelMap).forEach(([fuelName, fields]) => {
+        for (const f of fields) {
+          if (s[f] !== undefined && s[f] !== null && s[f] !== '') {
+            const val = parseFloat(s[f]);
+            if (!isNaN(val) && val > 0) { prices[fuelName] = val; break; }
+          }
+        }
+      });
+
+      // Normalisation nom API -> cle interne (pour le tableau prix)
+      const nomToFuel = {
+        'Gazole': 'Gazole', 'gazole': 'Gazole',
+        'SP95': 'SP95-E10', 'sp95': 'SP95-E10',
+        'SP95-E10': 'SP95-E10', 'Sans_Plomb 95': 'SP95-E10', 'SP 95': 'SP95-E10', 'Sans plomb 95': 'SP95-E10',
+        'SP98': 'SP98', 'sp98': 'SP98', 'Sans_Plomb 98': 'SP98', 'SP 98': 'SP98',
+        'E10': 'SP95-E10', 'e10': 'SP95-E10',
+        'E85': 'E85', 'e85': 'E85', 'Superiethanol-E85': 'E85',
+        'GPLc': 'GPLc', 'gplc': 'GPLc', 'GPL': 'GPLc', 'gpl': 'GPLc'
+      };
+
+      // Also try prix array format (older API format)
+      let prixArr = [];
+      try {
+        if (s.prix) prixArr = typeof s.prix === 'string' ? JSON.parse(s.prix) : s.prix;
+      } catch(e) {}
+      if (Array.isArray(prixArr)) {
+        prixArr.forEach(p => {
+          const nom = p['@nom'] || p.nom || p.name || '';
+          const valeur = p['@valeur'] || p.valeur || p.value || '';
+          const fuelKey = nomToFuel[nom] || nomToFuel[nom.trim()] || null;
+          if (fuelKey && valeur) {
+            const val = parseFloat(valeur);
+            if (!isNaN(val) && val > 0 && !prices[fuelKey]) prices[fuelKey] = val;
+          }
+        });
+      }
+
+      // Coordinates
+      let sLat = lat, sLng = lng;
+      if (s.geom && s.geom.lat) { sLat = s.geom.lat; sLng = s.geom.lon; }
+      else if (s.latitude && s.longitude) {
+        sLat = parseFloat(s.latitude) / (Math.abs(parseFloat(s.latitude)) > 90 ? 100000 : 1);
+        sLng = parseFloat(s.longitude) / (Math.abs(parseFloat(s.longitude)) > 180 ? 100000 : 1);
+      }
+
+      const dist = haversine(lat, lng, sLat, sLng);
+
+      // Try to find brand from OSM using nearest coords
+      let brand = null;
+      const keyExact = `${sLat.toFixed(4)}_${sLng.toFixed(4)}`;
+      if (brandMap[keyExact]) {
+        brand = brandMap[keyExact];
+      } else {
+        // Find closest OSM station within 100m
+        let minDist = 150;
+        Object.entries(brandMap).forEach(([key, name]) => {
+          const [bLat, bLng] = key.split('_').map(Number);
+          const d = haversine(sLat, sLng, bLat, bLng);
+          if (d < minDist) { minDist = d; brand = name; }
+        });
+      }
+
+      // Correspondances manuelles : adresse → nom de la station
+      const manualNames = [
+        { keywords: ['rovarch', 'rovach', 'felibres', '1832'], name: 'TotalEnergies Access - Relais Les Félibres' },
+      ];
+      if (!brand && s.adresse) {
+        const addrLower = s.adresse.toLowerCase();
+        for (const entry of manualNames) {
+          if (entry.keywords.some(k => addrLower.includes(k))) {
+            brand = entry.name;
+            break;
+          }
+        }
+      }
+
+      return {
+        id: s.id || Math.random(),
+        name: brand || s.enseignes_liste || s.enseignes || 'Station service',
+        address: [s.adresse, s.cp, s.ville].filter(Boolean).join(', '),
+        cp: s.cp || '',
+        ville: s.ville || '',
+        lat: sLat,
+        lng: sLng,
+        prices,
+        dist,
+        updated: s.gazole_maj || s.sp95_maj || s.prix_maj || '',
+        autoroute: (s.type_autoroute === true || s.autoroute === 'A' || s.presence === 'A' || (s.adresse && /a\d+|autoroute/i.test(s.adresse)))
+      };
+    }).filter(s => Object.keys(s.prices).length > 0); // Only keep stations with at least 1 price
+
+    filteredStations = allStations.filter(s => s.prices[selectedFuel]);
+
+    // ── Filtre par ville/CP : ne garder QUE les stations de la ville saisie ──
+    const isArrondissement = searchedCP && (
+      searchedCP.startsWith('75') || searchedCP.startsWith('69') || searchedCP.startsWith('13')
+    ) && searchedCP.length === 5;
+
+    let cityFiltered = filteredStations;
+    if (searchedCP) {
+      if (isArrondissement) {
+        // Arrondissement : filtre strict par CP exact
+        const byCP = filteredStations.filter(s => s.cp === searchedCP);
+        if (byCP.length > 0) cityFiltered = byCP;
+      } else {
+        // Ville normale : filtre par CP (préfixe) OU nom de ville
+        const cpPrefix = searchedCP.substring(0, 5);
+        const byCP = filteredStations.filter(s => s.cp === cpPrefix || s.cp === searchedCP);
+        const byVille = filteredStations.filter(s => s.ville.toUpperCase() === searchedVille);
+        // Priorité au filtre CP, sinon filtre par nom de ville
+        if (byCP.length > 0) cityFiltered = byCP;
+        else if (byVille.length > 0) cityFiltered = byVille;
+        // Si toujours rien, on garde tout le rayon (sécurité)
+      }
+    } else if (searchedVille) {
+      const byVille = filteredStations.filter(s => s.ville.toUpperCase() === searchedVille);
+      if (byVille.length > 0) cityFiltered = byVille;
+    }
+
+    filteredStations = cityFiltered;
+
+    if (!filteredStations.length) {
+      showEmpty(`Aucune station avec du ${selectedFuel} dans cette zone. Essayez un autre carburant.`);
+      return;
+    }
+
+    renderResults(filteredStations);
+    document.getElementById('dataSource').textContent = `Source : data.economie.gouv.fr · ${new Date().toLocaleTimeString('fr-FR')}`;
+
+  } catch(e) {
+    console.error(e);
+    // Fallback demo data
+    loadDemoData(lat, lng);
+  }
+}
+
+// ── Demo data fallback (si API indisponible) ──
+function loadDemoData(lat, lng) {
+  const enseignes = ['Total','BP','Shell','Esso','Leclerc','Intermarché','Carrefour','Auchan','Casino','Système U'];
+  allStations = enseignes.map((name, i) => {
+    const dlat = lat + (Math.random()-.5)*.05;
+    const dlng = lng + (Math.random()-.5)*.05;
+    return {
+      id: i,
+      name,
+      address: `${Math.floor(Math.random()*200)+1} rue de la République, ${document.getElementById('cityInput').value || 'France'}`,
+      ville: document.getElementById('cityInput').value || 'France',
+      lat: dlat, lng: dlng,
+      prices: {
+        'Gazole': +(1.55 + Math.random()*.25).toFixed(3),
+        'SP95-E10': +(1.70 + Math.random()*.25).toFixed(3),
+        'SP98':   +(1.80 + Math.random()*.25).toFixed(3),
+        'E85':    +(0.85 + Math.random()*.15).toFixed(3),
+        'GPLc':   +(0.95 + Math.random()*.15).toFixed(3),
+      },
+      dist: haversine(lat, lng, dlat, dlng),
+      updated: 'Données de démonstration'
+    };
+  });
+  filteredStations = allStations;
+  document.getElementById('dataSource').textContent = '⚠️ Données de démonstration (API temporairement indisponible)';
+  renderResults(filteredStations);
+}
+
+// ── Render results ──
+function renderResults(stations) {
+  let list = stations.filter(s => s.prices[selectedFuel]);
+  let listPanel = list; // Le filtrage par ville est déjà fait dans filteredStations
+  
+  // Sort les deux listes
+  if (currentSort === 'prix') {
+    list.sort((a,b) => a.prices[selectedFuel] - b.prices[selectedFuel]);
+    listPanel.sort((a,b) => a.prices[selectedFuel] - b.prices[selectedFuel]);
+  } else if (currentSort === 'distance') {
+    list.sort((a,b) => (a.dist||999) - (b.dist||999));
+    listPanel.sort((a,b) => (a.dist||999) - (b.dist||999));
+  } else {
+    list.sort((a,b) => a.name.localeCompare(b.name));
+    listPanel.sort((a,b) => a.name.localeCompare(b.name));
+  }
+
+  const prices = listPanel.map(s => s.prices[selectedFuel]);
+  const min = Math.min(...prices), max = Math.max(...prices), avg = prices.reduce((a,b)=>a+b,0)/prices.length;
+
+  // Stats bar
+  document.getElementById('statMin').textContent = min.toFixed(3) + ' €/L';
+  document.getElementById('statMax').textContent = max.toFixed(3) + ' €/L';
+  document.getElementById('statAvg').textContent = avg.toFixed(3) + ' €/L';
+  document.getElementById('statSave').textContent = ((max-min)*50).toFixed(2) + ' € / plein 50L';
+  document.getElementById('statCount').textContent = listPanel.length + ' stations';
+  document.getElementById('statsBar').style.display = 'flex';
+
+  // Panel header
+  document.getElementById('panelTitle').textContent = `${selectedFuel} — ${listPanel.length} stations`;
+  const cityLabel = document.getElementById('cityInput').value || '';
+  document.getElementById('resultCount').textContent = `${cityLabel ? cityLabel + ' · ' : ''}${searchedCP || 'rayon 10 km'}`;
+
+  // Cards (liste gauche = uniquement CP recherché)
+  const container = document.getElementById('stationsList');
+  if (!listPanel.length) { showEmpty(`Aucune station avec du ${selectedFuel} trouvée.`); return; }
+
+  container.innerHTML = listPanel.map((s, i) => {
+    const p = s.prices[selectedFuel];
+    const pct = (p - min) / (max - min || 1);
+    const priceCls = pct < .33 ? 'price-cheap' : pct < .66 ? 'price-mid' : 'price-exp';
+    const rankCls = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : '';
+    const distStr = s.dist !== null ? `${(s.dist/1000).toFixed(1)} km` : '';
+    const updStr = s.updated ? formatDate(s.updated) : '';
+    const otherFuels = Object.entries(s.prices).filter(([k]) => k !== selectedFuel)
+      .map(([k,v]) => `<span class="fuel-mini">${k} ${v.toFixed(3)}€</span>`).join('');
+
+    return `<div class="station-card" id="card-${s.id}" onclick="selectStation(${i})">
+      <div class="station-rank ${rankCls}">${i+1}</div>
+      <div class="station-info">
+        <div class="station-name">${s.name}</div>
+        <div class="station-addr">${s.address}</div>
+        <div class="station-meta">
+          ${distStr ? `<span class="station-dist">📍 ${distStr}</span>` : ''}
+          ${updStr ? `<span class="station-update">Màj ${updStr}</span>` : ''}
+        </div>
+        <div class="all-fuels">${otherFuels}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:.68rem;font-weight:700;color:${pct < .33 ? 'var(--green)' : pct < .66 ? 'var(--orange)' : 'var(--red)'};background:${pct < .33 ? 'var(--green-light)' : pct < .66 ? 'rgba(217,119,6,.08)' : 'rgba(185,28,28,.08)'};padding:.1rem .4rem;display:inline-block;margin-bottom:.2rem">${selectedFuel}</div>
+        <div class="station-price-main ${priceCls}">${p.toFixed(3)}<span class="price-unit">€/L</span></div>
+        ${i === 0 ? '<div style="font-size:.68rem;color:var(--green);font-weight:600;text-align:right;margin-top:.2rem">✓ MOINS CHER</div>' : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Map markers
+  markersLayer.clearLayers();
+  list.forEach((s, i) => {
+    const p = s.prices[selectedFuel];
+    const pct = (p - min) / (max - min || 1);
+    const color = pct < .33 ? '#15803d' : pct < .66 ? '#d97706' : '#b91c1c';
+    const size = i < 3 ? 36 : 28;
+
+    const fuelEmoji = `<svg width="13" height="13" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle;margin-right:2px"><rect x="3" y="2" width="12" height="18" rx="1.5" fill="white" opacity="0.9"/><rect x="5" y="4" width="8" height="5" rx="1" fill="#1d4ed8"/><rect x="15" y="6" width="5" height="10" rx="1" fill="white" opacity="0.8"/><rect x="16" y="8" width="3" height="2" rx="0.5" fill="#1d4ed8"/></svg>`;
+    const shortName = s.name.length > 12 ? s.name.substring(0,12)+'…' : s.name;
+    const icon = L.divIcon({
+      className:'',
+      html:`<div style="display:flex;flex-direction:column;align-items:center;cursor:pointer">
+        <div style="background:white;color:#1c2033;font-family:Arial,sans-serif;font-weight:700;font-size:10px;padding:2px 6px;border:1.5px solid ${color};white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.15)">
+          ${shortName}
+        </div>
+        <div style="background:${color};color:white;font-family:Arial,sans-serif;font-weight:bold;font-size:12px;padding:4px 8px;box-shadow:0 3px 8px rgba(0,0,0,.3);white-space:nowrap;border:2px solid white;position:relative">
+          ${fuelEmoji} <span style="font-size:10px;opacity:.85;font-weight:600">${selectedFuel}</span> ${p.toFixed(3)}€
+          <div style="position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:8px solid ${color}"></div>
+        </div>
+      </div>`,
+      iconSize:[110, 52],
+      iconAnchor:[55, 56]
+    });
+
+    const marker = L.marker([s.lat, s.lng], {icon})
+      .addTo(markersLayer)
+      .bindPopup(`<div class="popup-content">
+        <div class="popup-name">${s.name}</div>
+        <div class="popup-addr">${s.address}</div>
+        <div class="popup-price" style="color:${color}">${p.toFixed(3)} €/L <small style="font-size:.7rem;font-weight:300;color:#666">${selectedFuel}</small></div>
+        <div class="popup-fuels">${Object.entries(s.prices).map(([k,v])=>`<span class="popup-fuel">${k}: ${v.toFixed(3)}€</span>`).join('')}</div>
+      </div>`);
+  });
+
+  // Centre la carte sur les stations filtrées (pas tout le rayon)
+  if (list.length) {
+    const bounds = L.latLngBounds(list.map(s => [s.lat, s.lng]));
+    map.fitBounds(bounds, {padding:[50,50], maxZoom:15});
+  } else if (userLat && userLng) {
+    map.setView([userLat, userLng], 14);
+  }
+}
+
+function selectStation(idx) {
+  document.querySelectorAll('.station-card').forEach(c => c.classList.remove('selected'));
+  const list = filteredStations.filter(s => s.prices[selectedFuel]);
+  if (currentSort === 'prix') list.sort((a,b) => a.prices[selectedFuel] - b.prices[selectedFuel]);
+  else if (currentSort === 'distance') list.sort((a,b) => (a.dist||999) - (b.dist||999));
+  const s = list[idx];
+  if (!s) return;
+  document.getElementById('card-' + s.id)?.classList.add('selected');
+  map.setView([s.lat, s.lng], 15);
+}
+
+function sortBy(type, el) {
+  currentSort = type;
+  document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  if (filteredStations.length) renderResults(filteredStations);
+}
+
+// ── Utils ──
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = (lat2-lat1)*Math.PI/180;
+  const dLon = (lon2-lon1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function formatDate(str) {
+  if (!str) return '';
+  try {
+    const d = new Date(str);
+    if (isNaN(d)) return str;
+    const now = new Date();
+    const diff = Math.floor((now - d) / 60000);
+    if (diff < 60) return `il y a ${diff} min`;
+    if (diff < 1440) return `il y a ${Math.floor(diff/60)}h`;
+    return `il y a ${Math.floor(diff/1440)}j`;
+  } catch(e) { return ''; }
+}
+
+let cityMarker = null;
+
+function showCityMarker(lat, lng, cityName) {
+  if (cityMarker) map.removeLayer(cityMarker);
+  const icon = L.divIcon({
+    className:'',
+    html:`<div style="background:#1d4ed8;color:white;font-family:Arial,sans-serif;font-weight:bold;font-size:11px;padding:5px 9px;border:2px solid white;box-shadow:0 3px 10px rgba(0,0,0,.4);white-space:nowrap;position:relative">
+      📍 ${cityName}
+      <div style="position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:8px solid #1d4ed8"></div>
+    </div>`,
+    iconSize:[120,36],
+    iconAnchor:[60,42]
+  });
+  cityMarker = L.marker([lat, lng], {icon, zIndexOffset:1000}).addTo(map);
+}
+
+function showLoading(msg) {
+  document.getElementById('stationsList').innerHTML = `<div class="state-box"><div class="spinner"></div><p>${msg}</p></div>`;
+  markersLayer.clearLayers();
+  document.getElementById('statsBar').style.display = 'none';
+  document.getElementById('resultCount').textContent = '...';
+}
+
+function showEmpty(msg) {
+  document.getElementById('stationsList').innerHTML = `<div class="state-box"><div class="icon">🔍</div><p>${msg}</p></div>`;
+  document.getElementById('resultCount').textContent = '0 résultat';
+}
+
+// ── Autocomplete ──
+let acTimer = null;
+let acResults = [];
+let acIndex = -1;
+
+async function onCityInput(val) {
+  clearTimeout(acTimer);
+  const box = document.getElementById('autocompleteBox');
+  if (val.length < 2) { box.style.display = 'none'; return; }
+  acTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(val+' France')}&format=json&limit=8&addressdetails=1`);
+      const data = await res.json();
+      // Include arrondissements for Paris/Lyon/Marseille
+      acResults = data.filter(d => d.address && (
+        d.address.city || d.address.town || d.address.village ||
+        d.address.municipality || d.address.suburb || d.address.quarter ||
+        d.type === 'administrative'
+      ));
+      if (!acResults.length) { box.style.display = 'none'; return; }
+      box.innerHTML = acResults.map((d, i) => {
+        const cityName = d.address.city_district || d.address.suburb || d.address.quarter ||
+                         d.address.city || d.address.town || d.address.village ||
+                         d.address.municipality || d.display_name.split(',')[0];
+        const dept = d.address.county || d.address.state || '';
+        const cp = d.address.postcode || '';
+        // Detect arrondissement
+        const isArrondissement = cp && (cp.startsWith('75') || cp.startsWith('69') || cp.startsWith('13')) && cp.length === 5;
+        const arrLabel = isArrondissement ? ` — ${getArrondissement(cp)}` : '';
+        return `<div class="autocomplete-item" onclick="selectAcItem(${i})">
+          <span class="city-icon">${isArrondissement ? '🏙️' : '📍'}</span>
+          <span class="city-name">${cityName}${arrLabel}</span>
+          <span class="city-dept">${cp ? cp + ' · ' : ''}${dept}</span>
+        </div>`;
+      }).join('');
+      box.style.display = 'block';
+      acIndex = -1;
+    } catch(e) { box.style.display = 'none'; }
+  }, 300);
+}
+
+function selectAcItem(i) {
+  const d = acResults[i];
+  if (!d) return;
+  const cityName = d.address.city_district || d.address.suburb || d.address.quarter ||
+                   d.address.city || d.address.town || d.address.village ||
+                   d.address.municipality || d.display_name.split(',')[0];
+  const cp = d.address.postcode || '';
+  const isArr = cp && (cp.startsWith('75')||cp.startsWith('69')||cp.startsWith('13')) && cp.length===5;
+  const arrLabel = isArr ? ` (${getArrondissement(cp)})` : '';
+  document.getElementById('cityInput').value = cityName + (cp ? ' — ' + cp : '') + arrLabel;
+  document.getElementById('autocompleteBox').style.display = 'none';
+  const lat = parseFloat(d.lat), lng = parseFloat(d.lon);
+  userLat = lat; userLng = lng;
+  searchedCP = cp || null;
+  searchedVille = cityName.toUpperCase();
+  // Rayon depuis bounding box si disponible
+  let searchRadius = 5000;
+  if (d.boundingbox) {
+    const bb = d.boundingbox.map(Number);
+    const citySize = Math.max(haversine(bb[0], bb[2], bb[1], bb[2]), haversine(bb[0], bb[2], bb[0], bb[3]));
+    searchRadius = Math.min(Math.round(citySize * 0.7), 25000);
+    searchRadius = Math.max(searchRadius, 3000);
+  }
+  currentRadius = searchRadius;
+  map.setView([lat, lng], isArr ? 15 : 14);
+  showCityMarker(lat, lng, cityName + (cp ? ' ' + cp : ''));
+  fetchByCoords(lat, lng, searchRadius);
+}
+
+function getArrondissement(cp) {
+  if (!cp) return '';
+  const num = parseInt(cp.slice(-2));
+  if (cp.startsWith('75')) return `Paris ${num}e arrondissement`;
+  if (cp.startsWith('132') || cp === '13001') return `Marseille ${parseInt(cp.slice(2))||1}e arrondissement`;
+  if (cp.startsWith('690')) return `Lyon ${parseInt(cp.slice(3))||1}e arrondissement`;
+  return '';
+}
+
+function handleCityKey(e) {
+  const box = document.getElementById('autocompleteBox');
+  const items = box.querySelectorAll('.autocomplete-item');
+  if (e.key === 'ArrowDown') {
+    acIndex = Math.min(acIndex+1, items.length-1);
+    items.forEach((it,i) => it.style.background = i===acIndex ? '#f0f4ff' : '');
+    e.preventDefault();
+  } else if (e.key === 'ArrowUp') {
+    acIndex = Math.max(acIndex-1, 0);
+    items.forEach((it,i) => it.style.background = i===acIndex ? '#f0f4ff' : '');
+    e.preventDefault();
+  } else if (e.key === 'Enter') {
+    if (acIndex >= 0 && acResults[acIndex]) { selectAcItem(acIndex); }
+    else { box.style.display = 'none'; doSearch(); }
+  } else if (e.key === 'Escape') {
+    box.style.display = 'none';
+  }
+}
+
+
+// ── MODE AUTOROUTE ──
+function toggleAutorouteMode() {
+  autorouteMode = !autorouteMode;
+  const btn = document.getElementById('btnAutoroute');
+  const banner = document.getElementById('autorouteBanner');
+  if (autorouteMode) {
+    btn.classList.add('active');
+    banner.classList.add('show');
+    autorouteDirection = null;
+    startAutorouteGeolocate();
+  } else {
+    btn.classList.remove('active');
+    banner.classList.remove('show');
+    autorouteDirection = null;
+    autorouteDestMode = false;
+    prevLat = null; prevLng = null;
+    destLat = null; destLng = null; destName = '';
+    routeLines.forEach(l => map.removeLayer(l)); routeLines = [];
+    if (filteredStations.length) renderResults(filteredStations);
+  }
+}
+
+function startAutorouteGeolocate() {
+  document.getElementById('autorouteCityInput').value = document.getElementById('cityInput').value || '';
+  document.getElementById('autorouteCityStatus').textContent = '';
+  document.getElementById('autorouteDestInput') && (document.getElementById('autorouteDestInput').value = '');
+  document.getElementById('autorouteDestStatus') && (document.getElementById('autorouteDestStatus').textContent = '');
+  document.getElementById('directionModal').classList.add('open');
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(pos => {
+      userLat = pos.coords.latitude; userLng = pos.coords.longitude;
+      document.getElementById('autorouteCityStatus').textContent = '✅ Position GPS détectée. Entrez votre destination.';
+    }, () => {
+      document.getElementById('autorouteCityStatus').textContent = '📍 GPS indisponible. Entrez votre ville de départ.';
+    }, { enableHighAccuracy: true });
+  }
+}
+
+async function confirmAutorouteCity() {
+  const city = document.getElementById('autorouteCityInput').value.trim();
+  if (!city) { document.getElementById('autorouteCityStatus').textContent = '⚠️ Entrez une ville de départ.'; return; }
+  document.getElementById('autorouteCityStatus').textContent = '🔍 Recherche...';
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city+', France')}&format=json&limit=1`);
+    const data = await res.json();
+    if (!data.length) { document.getElementById('autorouteCityStatus').textContent = '❌ Ville non trouvée.'; return; }
+    userLat = parseFloat(data[0].lat); userLng = parseFloat(data[0].lon);
+    document.getElementById('autorouteCityStatus').textContent = `✅ ${data[0].display_name.split(',')[0]} — Entrez maintenant votre destination.`;
+  } catch(e) { document.getElementById('autorouteCityStatus').textContent = '❌ Erreur de connexion.'; }
+}
+
+async function confirmAutorouteDest() {
+  const dest = document.getElementById('autorouteDestInput').value.trim();
+  if (!dest) { document.getElementById('autorouteDestStatus').textContent = '⚠️ Entrez une ville de destination.'; return; }
+  if (!userLat || !userLng) { document.getElementById('autorouteDestStatus').textContent = '⚠️ Validez d\'abord votre ville de départ.'; return; }
+  document.getElementById('autorouteDestStatus').textContent = '🔍 Calcul du trajet...';
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(dest+', France')}&format=json&limit=1`);
+    const data = await res.json();
+    if (!data.length) { document.getElementById('autorouteDestStatus').textContent = '❌ Destination non trouvée.'; return; }
+    destLat = parseFloat(data[0].lat); destLng = parseFloat(data[0].lon);
+    destName = data[0].display_name.split(',')[0];
+    closeDirectionModal();
+    document.getElementById('bannerDirection').textContent = `🎯 Vers ${destName}`;
+    fetchAutorouteStations(userLat, userLng, destLat, destLng);
+  } catch(e) { document.getElementById('autorouteDestStatus').textContent = '❌ Erreur de connexion.'; }
+}
+
+function renderDirectionButtons() {} // conservé pour compatibilité
+function calcBearing(lat1, lon1, lat2, lon2) {
+  const dLon = (lon2-lon1)*Math.PI/180, la1=lat1*Math.PI/180, la2=lat2*Math.PI/180;
+  return (Math.atan2(Math.sin(dLon)*Math.cos(la2), Math.cos(la1)*Math.sin(la2)-Math.sin(la1)*Math.cos(la2)*Math.cos(dLon))*180/Math.PI+360)%360;
+}
+function bearingToDirection(b) {
+  if (b>=337.5||b<22.5)  return {label:'⬆️ Nord',bearing:b};
+  if (b<67.5)            return {label:'↗️ Nord-Est',bearing:b};
+  if (b<112.5)           return {label:'➡️ Est',bearing:b};
+  if (b<157.5)           return {label:'↘️ Sud-Est',bearing:b};
+  if (b<202.5)           return {label:'⬇️ Sud',bearing:b};
+  if (b<247.5)           return {label:'↙️ Sud-Ouest',bearing:b};
+  if (b<292.5)           return {label:'⬅️ Ouest',bearing:b};
+  return                        {label:'↖️ Nord-Ouest',bearing:b};
+}
+function closeDirectionModal() { document.getElementById('directionModal').classList.remove('open'); }
+function changeDirection() {
+  document.getElementById('autorouteDestInput').value = '';
+  document.getElementById('autorouteDestStatus').textContent = '';
+  document.getElementById('directionModal').classList.add('open');
+}
+
+// ── Calcul distance point → segment de polyline ──
+function distPointToSegment(pLat, pLng, aLat, aLng, bLat, bLng) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dx = bLng - aLng, dy = bLat - aLat;
+  if (dx === 0 && dy === 0) return haversine(pLat, pLng, aLat, aLng);
+  const t = Math.max(0, Math.min(1, ((pLng-aLng)*dx + (pLat-aLat)*dy) / (dx*dx + dy*dy)));
+  return haversine(pLat, pLng, aLat + t*dy, aLng + t*dx);
+}
+
+// ── Distance minimale d'un point à une polyline ──
+function distToPolyline(lat, lng, coords) {
+  let minD = Infinity;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const d = distPointToSegment(lat, lng, coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1]);
+    if (d < minD) minD = d;
+  }
+  return minD;
+}
+
+// ── Décoder polyline encodée (format OSRM) ──
+function decodePolyline(encoded, precision = 5) {
+  const factor = Math.pow(10, precision);
+  const coords = [];
+  let index = 0, lat = 0, lng = 0;
+  while (index < encoded.length) {
+    let b, shift = 0, result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    shift = 0; result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+    coords.push([lat / factor, lng / factor]);
+  }
+  return coords;
+}
+
+async function fetchAutorouteStations(dLat, dLng, arrivLat, arrivLng) {
+  showLoading("Calcul du trajet via OSRM...");
+  routeLines.forEach(l => map.removeLayer(l));
+  routeLines = [];
+
+  try {
+    // ── 1. Récupérer le tracé réel du trajet (avec alternatives) ──
+    const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${dLng},${dLat};${arrivLng},${arrivLat}?alternatives=true&geometries=polyline&overview=full`;
+    const osrmRes = await fetch(osrmUrl);
+    if (!osrmRes.ok) throw new Error('OSRM error');
+    const osrmData = await osrmRes.json();
+    if (!osrmData.routes?.length) { showEmpty("Impossible de calculer le trajet."); return; }
+
+    const routes = osrmData.routes; // tableau de tracés (1 ou 2)
+    const routeCoords = routes.map(r => decodePolyline(r.geometry)); // [[lat,lng],...]
+
+    // Tracer les routes sur la carte
+    const routeColors = ['#1d4ed8', '#f59e0b'];
+    routeCoords.forEach((coords, i) => {
+      const line = L.polyline(coords, {
+        color: routeColors[i] || '#6b7280',
+        weight: i === 0 ? 5 : 3,
+        opacity: i === 0 ? 0.8 : 0.5,
+        dashArray: i === 0 ? null : '8,6'
+      }).addTo(map);
+      routeLines.push(line);
+    });
+
+    // Bounding box englobant tous les tracés
+    const allPts = routeCoords.flat();
+    const bbox = {
+      minLat: Math.min(...allPts.map(p=>p[0])),
+      maxLat: Math.max(...allPts.map(p=>p[0])),
+      minLng: Math.min(...allPts.map(p=>p[1])),
+      maxLng: Math.max(...allPts.map(p=>p[1]))
+    };
+    const centerLat = (bbox.minLat + bbox.maxLat) / 2;
+    const centerLng = (bbox.minLng + bbox.maxLng) / 2;
+    const radiusM = haversine(bbox.minLat, bbox.minLng, bbox.maxLat, bbox.maxLng) / 2 + 30000;
+
+    // ── 2. Récupérer les stations dans la zone du trajet ──
+    showLoading("Chargement des stations sur le trajet...");
+    let allResults = [], offset = 0, total = null;
+    do {
+      const url = `https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/prix-des-carburants-en-france-flux-instantane-v2/records?where=within_distance(geom,geom'POINT(${centerLng} ${centerLat})',${Math.round(radiusM)}m)&limit=100&offset=${offset}&timezone=Europe%2FParis`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("API error");
+      const data = await res.json();
+      if (!data.results?.length) break;
+      allResults = allResults.concat(data.results);
+      if (total === null) total = data.total_count || data.results.length;
+      offset += 100;
+      showLoading(`Stations chargées : ${allResults.length}...`);
+    } while (allResults.length < total && offset < 2000);
+
+    const brandMap = await fetchBrandsFromOSM(centerLat, centerLng, Math.min(radiusM, 50000));
+
+    // ── 3b. Récupérer les stations d'autoroute via Overpass OSM ──
+    showLoading("Vérification des stations sur autoroute...");
+    let autorouteIds = new Set();
+    try {
+      // Stations de carburant sur autoroute ou aire de service dans la bbox
+      const pad = 0.5;
+      const overpassQuery = `[out:json][timeout:25];
+        node["amenity"="fuel"](${bbox.minLat-pad},${bbox.minLng-pad},${bbox.maxLat+pad},${bbox.maxLng+pad});
+        out body;`;
+      const ovRes = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`);
+      if (ovRes.ok) {
+        const ovData = await ovRes.json();
+        // Garder uniquement celles sur autoroute (motorway) ou aire de service
+        ovData.elements?.forEach(el => {
+          const tags = el.tags || {};
+          const isAutoroute =
+            tags.highway === 'services' ||
+            tags.highway === 'rest_area' ||
+            /autoroute|motorway|péage|aire|toll/i.test(tags.name || '') ||
+            /autoroute|motorway|péage|aire|toll/i.test(tags.operator || '') ||
+            /autoroute|motorway|péage|aire|toll/i.test(tags.brand || '') ||
+            /^A\d/i.test(tags.ref || '') ||
+            tags.access === 'customers' && /autoroute|aire/i.test(tags.description || tags.name || '') ||
+            ['TotalEnergies Access','BP','Esso','Shell'].some(b => (tags.brand||'').includes(b)) && 
+              /aire|autoroute|A\d/i.test(tags.name || tags['addr:street'] || '');
+          if (isAutoroute) {
+            // Stocker la clé de coordonnées arrondie pour matcher
+            const key = `${parseFloat(el.lat).toFixed(3)}_${parseFloat(el.lon).toFixed(3)}`;
+            autorouteIds.add(key);
+          }
+        });
+      }
+    } catch(e) { console.warn('Overpass error', e); }
+
+    // ── 4. Parser et filtrer les stations ──
+    const CORRIDOR = 3000; // 3 km du tracé (strict autoroute)
+    const stations = allResults.map(s => {
+      const prices = {};
+      const fuelMap = {'Gazole':['gazole_prix','gazole'],'SP95-E10':['sp95_prix','sp95','sp95_e10_prix','sp95_e10','e10_prix','e10'],'SP98':['sp98_prix','sp98'],'E85':['e85_prix','e85'],'GPLc':['gplc_prix','gplc','gpl_prix','gpl']};
+      Object.entries(fuelMap).forEach(([fn,fields]) => { for(const f of fields){ if(s[f]!=null&&s[f]!==''){const v=parseFloat(s[f]);if(!isNaN(v)&&v>0){prices[fn]=v;break;}}}});
+      let sLat=dLat, sLng=dLng;
+      if(s.geom?.lat){sLat=s.geom.lat;sLng=s.geom.lon;}
+      else if(s.latitude&&s.longitude){sLat=parseFloat(s.latitude)/(Math.abs(parseFloat(s.latitude))>90?100000:1);sLng=parseFloat(s.longitude)/(Math.abs(parseFloat(s.longitude))>180?100000:1);}
+
+      if (!Object.keys(prices).length) return null;
+
+      // ── Filtre 1 : proximité au tracé ──
+      const routeIdx = routeCoords.map((coords, i) => ({i, d: distToPolyline(sLat, sLng, coords)}))
+        .filter(r => r.d <= CORRIDOR);
+      if (!routeIdx.length) return null;
+
+      // ── Filtre 2 : station sur autoroute ──
+      const isAutoroute =
+        s.type_autoroute === true ||
+        s.autoroute === 'A' ||
+        s.presence === 'A' ||
+        /a\d+|autoroute|aire\s+de|toll|péage/i.test(s.adresse || '') ||
+        /a\d+|autoroute|aire\s+de/i.test((s.enseignes_liste || s.enseignes || '')) ||
+        // Vérifier dans Overpass (correspondance coordonnées à ±200m)
+        (() => {
+          const keyS = `${sLat.toFixed(3)}_${sLng.toFixed(3)}`;
+          if (autorouteIds.has(keyS)) return true;
+          // Tolérance : tester les clés voisines
+          for (const id of autorouteIds) {
+            const [aLat, aLng] = id.split('_').map(Number);
+            if (haversine(sLat, sLng, aLat, aLng) < 300) return true;
+          }
+          return false;
+        })();
+
+      if (!isAutoroute) return null;
+
+      let brand = null;
+      const ke = `${sLat.toFixed(4)}_${sLng.toFixed(4)}`;
+      if(brandMap[ke]) brand = brandMap[ke];
+      else { let mn=150; Object.entries(brandMap).forEach(([k,n])=>{const[bL,bG]=k.split('_').map(Number);const d=haversine(sLat,sLng,bL,bG);if(d<mn){mn=d;brand=n;}}); }
+
+      return {
+        id: s.id || Math.random(),
+        name: brand || s.enseignes_liste || s.enseignes || 'Station service',
+        address: [s.adresse, s.cp, s.ville].filter(Boolean).join(', '),
+        lat: sLat, lng: sLng, prices,
+        dist: haversine(dLat, dLng, sLat, sLng),
+        routes: routeIdx.map(r => r.i),
+        updated: s.gazole_maj || s.sp95_maj || ''
+      };
+    }).filter(Boolean);
+
+    if (!stations.length) { showEmpty("Aucune station trouvée sur ce trajet."); return; }
+
+    filteredStations = stations;
+    searchedCP = null;
+
+    // Centrer la carte sur le trajet
+    map.fitBounds(L.latLngBounds(allPts), {padding:[40,40]});
+
+    renderTrajetResults(stations, routeCoords, dLat, dLng, routes);
+    document.getElementById('dataSource').textContent = `🛣️ ${destName} · ${routes.length > 1 ? routes.length + ' itinéraires' : '1 itinéraire'} · ${stations.length} stations · ${new Date().toLocaleTimeString('fr-FR')}`;
+
+  } catch(e) { console.error(e); showEmpty("Erreur lors du calcul du trajet. Vérifiez votre connexion."); }
+}
+
+function renderTrajetResults(stations, routeCoords, dLat, dLng, routes) {
+  const container = document.getElementById('stationsList');
+  markersLayer.clearLayers();
+
+  const fuel = selectedFuel;
+  const fuelStations = stations.filter(s => s.prices[fuel]);
+  fuelStations.sort((a, b) => a.dist - b.dist);
+
+  const prices = fuelStations.map(s => s.prices[fuel]);
+  const min = prices.length ? Math.min(...prices) : 0;
+  const max = prices.length ? Math.max(...prices) : 0;
+  const avg = prices.length ? prices.reduce((a,b)=>a+b,0)/prices.length : 0;
+
+  if (prices.length) {
+    document.getElementById('statMin').textContent = min.toFixed(3) + ' €/L';
+    document.getElementById('statMax').textContent = max.toFixed(3) + ' €/L';
+    document.getElementById('statAvg').textContent = avg.toFixed(3) + ' €/L';
+    document.getElementById('statSave').textContent = ((max-min)*50).toFixed(2) + ' € / plein 50L';
+    document.getElementById('statCount').textContent = fuelStations.length + ' stations';
+    document.getElementById('statsBar').style.display = 'flex';
+  }
+
+  const routeColors = ['#1d4ed8', '#f59e0b'];
+  const routeLabels = routes.length > 1
+    ? routes.map((r, i) => `Itinéraire ${i+1} (${Math.round(r.distance/1000)} km · ${Math.round(r.duration/60)} min)`)
+    : ['Itinéraire principal'];
+
+  document.getElementById('panelTitle').textContent = `🛣️ ${destName} — ${fuelStations.length} stations`;
+  document.getElementById('resultCount').textContent = routes.length > 1 ? `${routes.length} itinéraires` : '';
+
+  let html = '';
+
+  // Grouper par itinéraire
+  for (let ri = 0; ri < routeCoords.length; ri++) {
+    const routeStations = fuelStations.filter(s => s.routes.includes(ri));
+    if (!routeStations.length) continue;
+
+    html += `<div class="panel-section-header" style="background:${ri===0?'#eff6ff':'#fffbeb'};border-top-color:${routeColors[ri]};border-bottom-color:${ri===0?'#bfdbfe':'#fde68a'};color:${routeColors[ri]}">
+      ${ri===0?'🔵':'🟡'} ${routeLabels[ri]} · ${routeStations.length} stations
+    </div>`;
+
+    html += routeStations.map((s, i) => {
+      const p = s.prices[fuel];
+      const pct = (p - min) / (max - min || 1);
+      const priceCls = pct < .33 ? 'price-cheap' : pct < .66 ? 'price-mid' : 'price-exp';
+      const rankCls = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : '';
+      const distStr = `${(s.dist/1000).toFixed(1)} km`;
+      // Adresse courte : ville uniquement
+      const addrParts = s.address.split(',');
+      const shortAddr = addrParts.length >= 2 ? addrParts.slice(-2).join(',').trim() : s.address;
+      return `<div class="station-card" id="card-${s.id}" onclick="focusStation(${s.lat},${s.lng})" style="padding:.7rem 1rem">
+        <div class="station-rank ${rankCls}">${i+1}</div>
+        <div class="station-info">
+          <div class="station-name" style="font-size:.88rem">${s.name}</div>
+          <div class="station-addr" style="font-size:.72rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px">${shortAddr}</div>
+          <div class="station-meta" style="margin-top:.25rem">
+            <span class="station-dist">📍 ${distStr}</span>
+            ${s.updated ? `<span class="station-update">· ${formatDate(s.updated)}</span>` : ''}
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:.68rem;font-weight:700;color:${pct < .33 ? 'var(--green)' : pct < .66 ? 'var(--orange)' : 'var(--red)'};background:${pct < .33 ? 'var(--green-light)' : pct < .66 ? 'rgba(217,119,6,.08)' : 'rgba(185,28,28,.08)'};padding:.1rem .4rem;display:inline-block;margin-bottom:.2rem">${fuel}</div>
+          <div class="station-price-main ${priceCls}" style="font-size:1.2rem">${p.toFixed(3)}<span class="price-unit">€/L</span></div>
+          ${i===0?'<div style="font-size:.62rem;color:var(--green);font-weight:600;text-align:right;margin-top:.1rem">✓ MOINS CHER</div>':''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  container.innerHTML = html || '<div class="state-box"><p>Aucune station trouvée sur ce trajet.</p></div>';
+
+  // Marqueurs carte
+  fuelStations.forEach(s => {
+    const p = s.prices[fuel];
+    const pct = (p - min) / (max - min || 1);
+    const color = pct < .33 ? '#15803d' : pct < .66 ? '#d97706' : '#b91c1c';
+    const shortName = s.name.length > 14 ? s.name.substring(0,14)+'…' : s.name;
+    const icon = L.divIcon({
+      className:'',
+      html:`<div style="position:relative;display:inline-block">
+        <div style="background:${color};color:white;font-family:Arial,sans-serif;font-size:11px;padding:3px 7px;box-shadow:0 2px 6px rgba(0,0,0,.35);white-space:nowrap;border:2px solid white;border-radius:3px;line-height:1.3">
+          <span style="font-weight:700">${p.toFixed(3)}€</span><span style="opacity:.8;font-size:9px;margin-left:3px">${fuel}</span>
+          <span style="opacity:.7;font-size:9px;margin-left:4px;border-left:1px solid rgba(255,255,255,.4);padding-left:4px">${shortName}</span>
+        </div>
+        <div style="position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid ${color}"></div>
+      </div>`,
+      iconSize:[160,28], iconAnchor:[80,34]
+    });
+    L.marker([s.lat, s.lng], {icon}).addTo(markersLayer)
+      .bindPopup(`<div class="popup-content">
+        <div class="popup-name">${s.name}</div>
+        <div class="popup-addr">${s.address}</div>
+        <div class="popup-price" style="color:${color}">${p.toFixed(3)} €/L <small>${fuel}</small></div>
+        <div class="popup-fuels">${Object.entries(s.prices).map(([k,v])=>`<span class="popup-fuel">${k}: ${v.toFixed(3)}€</span>`).join('')}</div>
+      </div>`);
+  });
+}
+
+function focusStation(lat, lng) { map.setView([lat, lng], 15); }
+
+// ── MODE BORNES ÉLECTRIQUES ──
+let electriqueMode = false;
+let electriqueMarkers = L.layerGroup().addTo(map);
+
+// ── Variables bornes électriques trajet ──
+let elecDepartLat = null, elecDepartLng = null;
+let elecDestLat   = null, elecDestLng   = null;
+let elecDestName  = '';
+let elecRouteLines = [];
+
+function toggleElectriqueMode() {
+  electriqueMode = !electriqueMode;
+  const btn = document.getElementById('btnElectrique');
+  if (electriqueMode) {
+    btn.classList.add('active');
+    // Réinitialiser les champs et ouvrir la modale
+    document.getElementById('elecCityInput').value  = document.getElementById('cityInput').value || '';
+    document.getElementById('elecDestInput').value  = '';
+    document.getElementById('elecCityStatus').textContent = '';
+    document.getElementById('elecDestStatus').textContent = '';
+    elecDepartLat = userLat; elecDepartLng = userLng;
+    document.getElementById('electriqueModal').classList.add('open');
+  } else {
+    btn.classList.remove('active');
+    electriqueMarkers.clearLayers();
+    elecRouteLines.forEach(l => map.removeLayer(l));
+    elecRouteLines = [];
+  }
+}
+
+async function confirmElecCity() {
+  const city = document.getElementById('elecCityInput').value.trim();
+  if (!city) { document.getElementById('elecCityStatus').textContent = '⚠️ Entrez une ville de départ.'; return; }
+  document.getElementById('elecCityStatus').textContent = '🔍 Recherche...';
+  try {
+    const res  = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city+', France')}&format=json&limit=1`);
+    const data = await res.json();
+    if (!data.length) { document.getElementById('elecCityStatus').textContent = '❌ Ville non trouvée.'; return; }
+    elecDepartLat = parseFloat(data[0].lat);
+    elecDepartLng = parseFloat(data[0].lon);
+    document.getElementById('elecCityStatus').textContent = `✅ ${data[0].display_name.split(',')[0]} — Entrez votre destination.`;
+  } catch(e) { document.getElementById('elecCityStatus').textContent = '❌ Erreur de connexion.'; }
+}
+
+async function confirmElecDest() {
+  const dest = document.getElementById('elecDestInput').value.trim();
+  if (!dest) { document.getElementById('elecDestStatus').textContent = '⚠️ Entrez une ville de destination.'; return; }
+  if (!elecDepartLat || !elecDepartLng) { document.getElementById('elecDestStatus').textContent = '⚠️ Validez d\'abord votre ville de départ.'; return; }
+  document.getElementById('elecDestStatus').textContent = '🔍 Calcul du trajet...';
+  try {
+    const res  = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(dest+', France')}&format=json&limit=1`);
+    const data = await res.json();
+    if (!data.length) { document.getElementById('elecDestStatus').textContent = '❌ Destination non trouvée.'; return; }
+    elecDestLat  = parseFloat(data[0].lat);
+    elecDestLng  = parseFloat(data[0].lon);
+    elecDestName = data[0].display_name.split(',')[0];
+    document.getElementById('electriqueModal').classList.remove('open');
+    fetchBornesTrajet(elecDepartLat, elecDepartLng, elecDestLat, elecDestLng);
+  } catch(e) { document.getElementById('elecDestStatus').textContent = '❌ Erreur de connexion.'; }
+}
+
+async function fetchBornesTrajet(dLat, dLng, aLat, aLng) {
+  showLoading("Calcul du trajet...");
+  electriqueMarkers.clearLayers();
+  elecRouteLines.forEach(l => map.removeLayer(l));
+  elecRouteLines = [];
+
+  try {
+    // ── 1. Trace OSRM ──
+    console.log('[EV] Debut fetchBornesTrajet', dLat, dLng, aLat, aLng);
+    const osrmRes  = await fetch(`https://router.project-osrm.org/route/v1/driving/${dLng},${dLat};${aLng},${aLat}?alternatives=true&geometries=polyline&overview=full`);
+    const osrmData = await osrmRes.json();
+    console.log('[EV] OSRM routes:', osrmData.routes?.length);
+    if (!osrmData.routes?.length) { showEmpty("Impossible de calculer le trajet."); return; }
+
+    const routes      = osrmData.routes;
+    const routeCoords = routes.map(r => decodePolyline(r.geometry));
+    const routeColors = ['#15803d', '#86efac'];
+
+    routeCoords.forEach((coords, i) => {
+      const line = L.polyline(coords, {
+        color:     routeColors[i] || '#15803d',
+        weight:    i === 0 ? 5 : 3,
+        opacity:   i === 0 ? 0.8 : 0.5,
+        dashArray: i === 0 ? null : '8,6'
+      }).addTo(map);
+      elecRouteLines.push(line);
+    });
+
+    const allPts = routeCoords.flat();
+    const bbox   = {
+      minLat: Math.min(...allPts.map(p => p[0])),
+      maxLat: Math.max(...allPts.map(p => p[0])),
+      minLng: Math.min(...allPts.map(p => p[1])),
+      maxLng: Math.max(...allPts.map(p => p[1]))
+    };
+
+    // ── 2. Une seule requete IRVE sur la bbox du trajet ──
+    showLoading("Recherche des bornes \u00e9lectriques sur le trajet...");
+    const pad = 0.15; // ~15 km de marge autour de la bbox
+    const CORRIDOR = 8000; // 8 km max du trace
+
+    const url = `https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/bornes-irve/records?where=geo_point_borne is not null AND geo_point_borne >= geom'POINT(${bbox.minLng - pad} ${bbox.minLat - pad})' AND geo_point_borne <= geom'POINT(${bbox.maxLng + pad} ${bbox.maxLat + pad})'&limit=100&timezone=Europe%2FParis`;
+
+    let allBornes = [];
+    try {
+      // Requete principale par centre + grand rayon
+      const centerLat = (bbox.minLat + bbox.maxLat) / 2;
+      const centerLng = (bbox.minLng + bbox.maxLng) / 2;
+      console.log('[EV] Centre:', centerLat, centerLng, 'bbox:', bbox);
+      const rayon = Math.max(
+        haversine(bbox.minLat, bbox.minLng, bbox.maxLat, bbox.maxLng) / 2 + 20000,
+        50000
+      );
+
+      let offset = 0;
+      let total = null;
+      do {
+        const u = `https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/bornes-irve/records?where=within_distance(geo_point_borne,geom'POINT(${centerLng} ${centerLat})',${Math.round(rayon)}m)&limit=100&offset=${offset}&timezone=Europe%2FParis`;
+        showLoading(`Chargement bornes... (${allBornes.length} trouv\u00e9es)`);
+        const res  = await fetch(u);
+        if (!res.ok) break;
+        const data = await res.json();
+        if (!data.results?.length) break;
+        allBornes = allBornes.concat(data.results);
+        if (total === null) total = data.total_count || data.results.length;
+        offset += 100;
+      } while (allBornes.length < total && offset < 600 && allBornes.length < 500);
+
+    } catch(e) {
+      console.error('IRVE error:', e);
+    }
+
+    console.log('[EV] Total bornes recues:', allBornes.length);
+    if (!allBornes.length) {
+      showEmpty(`Aucune borne \u00e9lectrique trouv\u00e9e. V\u00e9rifiez votre connexion.`);
+      map.fitBounds(L.latLngBounds(allPts), {padding:[40,40]});
+      return;
+    }
+
+    // ── 3. Filtrer : proches du trace ──
+    showLoading("Filtrage sur le trajet...");
+    const bornesSurTrajet = allBornes.filter(b => {
+      const bLat = b.geo_point_borne?.lat || b.ylatitude;
+      const bLng = b.geo_point_borne?.lon || b.xlongitude;
+      if (!bLat || !bLng) return false;
+      return routeCoords.some(coords => distToPolyline(bLat, bLng, coords) <= CORRIDOR);
+    });
+
+    console.log('[EV] Bornes sur trajet (corridor 8km):', bornesSurTrajet.length);
+    if (!bornesSurTrajet.length) {
+      showEmpty(`Aucune borne \u00e9lectrique sur le trajet vers ${elecDestName}.`);
+      map.fitBounds(L.latLngBounds(allPts), {padding:[40,40]});
+      return;
+    }
+
+    // ── 4. Construire et trier ──
+    const resultats = bornesSurTrajet.map(b => {
+      const bLat      = b.geo_point_borne?.lat || b.ylatitude;
+      const bLng      = b.geo_point_borne?.lon || b.xlongitude;
+      const nom       = b.n_station || b.n_enseigne || b.nom_operateur || 'Borne \u00e9lectrique';
+      const adresse   = b.adresse_station || '';
+      const operateur = b.nom_operateur || b.nom_amenageur || '';
+      const puissance = b.puissance_nominale ? `${b.puissance_nominale} kW` : null;
+      const prise     = b.type_prise || '';
+      const nPoints   = b.nbre_pdc || 1;
+      return {
+        lat: bLat, lng: bLng, nom, adresse, operateur,
+        puissance, prise, nPoints,
+        dist: haversine(dLat, dLng, bLat, bLng)
+      };
+    });
+    resultats.sort((a, b) => a.dist - b.dist);
+
+    // ── 5. Panel gauche ──
+    markersLayer.clearLayers();
+    const container = document.getElementById('stationsList');
+    document.getElementById('panelTitle').textContent  = `\u26a1 ${resultats.length} bornes sur le trajet`;
+    document.getElementById('resultCount').textContent = `Trajet vers ${elecDestName}`;
+    document.getElementById('statsBar').style.display  = 'none';
+
+    container.innerHTML = resultats.map((s, i) => {
+      const puissStr  = s.puissance
+        ? `<span class="borne-badge" style="font-size:.68rem;font-weight:600;padding:.1rem .4rem;background:#dcfce7;color:#15803d;border:1px solid #bbf7d0">\u26a1 ${s.puissance}</span>`
+        : '';
+      const priseStr  = s.prise
+        ? `<span class="borne-badge" style="font-size:.68rem;padding:.1rem .4rem;background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0">\uD83D\uDD0C ${s.prise}</span>`
+        : '';
+      const ptsStr    = s.nPoints > 1
+        ? `<span class="borne-badge" style="font-size:.68rem;padding:.1rem .4rem;background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0">${s.nPoints} points</span>`
+        : '';
+      return `<div class="station-card" onclick="map.setView([${s.lat},${s.lng}],16)" style="border-left:3px solid #15803d">
+        <div class="station-rank" style="color:#15803d">${i + 1}</div>
+        <div class="station-info">
+          <div class="station-name" style="color:#15803d">\u26a1 ${s.nom}</div>
+          ${s.adresse ? `<div class="station-addr">${s.adresse}</div>` : ''}
+          <div class="station-meta" style="flex-wrap:wrap;gap:.3rem;margin-top:.4rem">
+            <span class="station-dist">\uD83D\uDCCD ${(s.dist / 1000).toFixed(1)} km du d\u00e9part</span>
+            ${puissStr}${priseStr}${ptsStr}
+          </div>
+          ${s.operateur ? `<div style="font-size:.72rem;color:#9ca3af;margin-top:.2rem">${s.operateur}</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    // ── 6. Marqueurs carte ──
+    resultats.forEach(s => {
+      const shortNom = s.nom.length > 15 ? s.nom.substring(0, 15) + '...' : s.nom;
+      const labelPow = s.puissance || 'Borne EV';
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="display:flex;flex-direction:column;align-items:center">
+          <div style="background:white;color:#15803d;font-family:Arial,sans-serif;font-weight:700;font-size:10px;padding:2px 6px;border:1.5px solid #15803d;white-space:nowrap">${shortNom}</div>
+          <div style="background:#15803d;color:white;font-family:Arial,sans-serif;font-weight:bold;font-size:11px;padding:3px 8px;box-shadow:0 2px 6px rgba(0,0,0,.3);white-space:nowrap;border:2px solid white;position:relative">
+            \u26a1 ${labelPow}
+            <div style="position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid #15803d"></div>
+          </div>
+        </div>`,
+        iconSize: [110, 50], iconAnchor: [55, 54]
+      });
+      L.marker([s.lat, s.lng], {icon}).addTo(markersLayer)
+        .bindPopup(`<div style="font-family:Arial,sans-serif;min-width:190px">
+          <div style="font-weight:700;font-size:.95rem;color:#15803d">\u26a1 ${s.nom}</div>
+          ${s.adresse ? `<div style="font-size:.78rem;color:#666;margin-top:.2rem">${s.adresse}</div>` : ''}
+          ${s.puissance ? `<div style="font-size:.85rem;font-weight:600;color:#15803d;margin-top:.3rem">\u26a1 ${s.puissance}</div>` : ''}
+          ${s.prise ? `<div style="font-size:.78rem;margin-top:.3rem">\uD83D\uDD0C ${s.prise}</div>` : ''}
+          ${s.nPoints > 1 ? `<div style="font-size:.78rem;color:#555">${s.nPoints} points de charge</div>` : ''}
+          ${s.operateur ? `<div style="font-size:.75rem;color:#999;margin-top:.3rem">${s.operateur}</div>` : ''}
+        </div>`);
+    });
+
+    map.fitBounds(L.latLngBounds(allPts), {padding:[40,40]});
+    document.getElementById('dataSource').textContent = `\u26a1 ${resultats.length} bornes EV \u00b7 Trajet vers ${elecDestName} \u00b7 ${new Date().toLocaleTimeString('fr-FR')}`;
+    showLoading("");
+
+  } catch(e) {
+    console.error('fetchBornesTrajet error:', e);
+    showEmpty("Erreur lors de la recherche. V\u00e9rifiez votre connexion.");
+  }
+}
+
+
+async function fetchBornesElectriques(lat, lng) {
+  showLoading("Chargement des bornes électriques sur autoroute...");
+  try {
+    const radius = autorouteMode ? 150000 : (currentRadius || 10000);
+    const url = `https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/bornes-irve/records?where=within_distance(geo_point_borne,geom'POINT(${lng} ${lat})',${radius}m)&limit=100&timezone=Europe%2FParis`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('API error');
+    const data = await res.json();
+    if (!data.results?.length) { showLoading(""); showEmpty("Aucune borne électrique trouvée dans cette zone."); return; }
+
+    electriqueMarkers.clearLayers();
+
+    // ── Filtre : uniquement les bornes sur autoroute ──
+    const bornesAutoroute = data.results.filter(b => {
+      const nom     = (b.n_station || b.n_enseigne || '').toLowerCase();
+      const oper    = (b.nom_operateur || b.nom_amenageur || '').toLowerCase();
+      const adresse = (b.adresse_station || '').toLowerCase();
+      const ref     = (b.ref || '').toLowerCase();
+      const combined = nom + ' ' + oper + ' ' + adresse + ' ' + ref;
+      return /autoroute|aire\s+de|a\d{1,3}\b|vinci|sanef|aprr|escota|cofiroute|atlandes|alienor|area\b|tunnel|péage|motorway|rest.?area|service.?area/.test(combined);
+    });
+
+    if (!bornesAutoroute.length) {
+      showLoading("");
+      showEmpty("Aucune borne électrique sur autoroute trouvée dans cette zone.");
+      return;
+    }
+
+    let count = 0;
+    bornesAutoroute.forEach(b => {
+      const bLat = b.geo_point_borne?.lat || b.ylatitude;
+      const bLng = b.geo_point_borne?.lon || b.xlongitude;
+      if (!bLat || !bLng) return;
+      const nom      = b.n_station || b.n_enseigne || 'Borne autoroute';
+      const puissance = b.puissance_nominale ? `${b.puissance_nominale} kW` : '';
+      const prise     = b.type_prise || '';
+      const adresse   = b.adresse_station || '';
+      const operateur = b.nom_operateur || b.nom_amenageur || '';
+      const nPoints   = b.nbre_pdc || 1;
+
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="background:#15803d;color:white;font-size:11px;font-weight:700;padding:4px 8px;border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,.3);white-space:nowrap;display:flex;align-items:center;gap:3px;border-radius:3px;position:relative">
+          ⚡ ${puissance || 'Borne'}
+          <div style="position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid #15803d"></div>
+        </div>`,
+        iconSize: [90, 30],
+        iconAnchor: [45, 36]
+      });
+
+      L.marker([bLat, bLng], { icon })
+        .addTo(electriqueMarkers)
+        .bindPopup(`<div style="font-family:Arial,sans-serif;min-width:190px">
+          <div style="font-weight:700;font-size:.95rem;color:#15803d">⚡ ${nom}</div>
+          ${adresse   ? `<div style="font-size:.78rem;color:#666;margin-top:.2rem">${adresse}</div>` : ''}
+          ${puissance ? `<div style="font-size:.85rem;margin-top:.4rem">🔋 <b>${puissance}</b></div>` : ''}
+          ${prise     ? `<div style="font-size:.78rem;color:#555">🔌 ${prise}</div>` : ''}
+          ${nPoints > 1 ? `<div style="font-size:.78rem;color:#555">Points de charge : <b>${nPoints}</b></div>` : ''}
+          ${operateur ? `<div style="font-size:.75rem;color:#999;margin-top:.3rem">${operateur}</div>` : ''}
+        </div>`);
+      count++;
+    });
+
+    document.getElementById('dataSource').textContent = `⚡ ${count} bornes électriques autoroute affichées · ${new Date().toLocaleTimeString('fr-FR')}`;
+    showLoading("");
+  } catch(e) {
+    console.error(e);
+    showLoading("");
+  }
+}
+
+// Close autocomplete on outside click
+document.addEventListener('click', e => {
+  if (!e.target.closest('.search-input-wrap')) {
+    document.getElementById('autocompleteBox').style.display = 'none';
+  }
+});
+
+
+// ═══════════════════════════════════════
+// MOBILE — fonctions d'interface
+// ═══════════════════════════════════════
+
+let mobilePanelOpen = false;
+
+function isMobile() {
+  return window.innerWidth <= 768;
+}
+
+function toggleMobilePanel() {
+  mobilePanelOpen = !mobilePanelOpen;
+  const panel = document.querySelector('.left-panel');
+  const statsBar = document.getElementById('statsBar');
+  const toggleBtn = document.getElementById('mobileListToggle');
+  if (mobilePanelOpen) {
+    panel.classList.add('open');
+    if (statsBar.style.display !== 'none') statsBar.classList.add('with-panel');
+    toggleBtn.textContent = '✕';
+  } else {
+    panel.classList.remove('open');
+    statsBar.classList.remove('with-panel');
+    toggleBtn.textContent = '📋';
+  }
+  // Invalider la carte pour qu'elle se redessine
+  setTimeout(() => map.invalidateSize(), 350);
+}
+
+function mobileNavTo(tab) {
+  const panel = document.querySelector('.left-panel');
+  const hero = document.querySelector('.hero');
+  mobileNavActivate('nav' + tab.charAt(0).toUpperCase() + tab.slice(1));
+
+  if (!isMobile()) return;
+
+  if (tab === 'map') {
+    // Fermer le panel, afficher la carte
+    panel.classList.remove('open');
+    mobilePanelOpen = false;
+    document.getElementById('mobileListToggle').textContent = '📋';
+    setTimeout(() => map.invalidateSize(), 350);
+  } else if (tab === 'list') {
+    // Ouvrir le panel
+    panel.classList.add('open');
+    mobilePanelOpen = true;
+    document.getElementById('mobileListToggle').textContent = '✕';
+  } else if (tab === 'search') {
+    // Scroll vers le haut pour voir la recherche
+    panel.classList.remove('open');
+    mobilePanelOpen = false;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setTimeout(() => document.getElementById('cityInput').focus(), 400);
+  }
+}
+
+function mobileNavActivate(id) {
+  document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById(id);
+  if (btn) btn.classList.add('active');
+}
+
+// Ouvrir automatiquement le panel après une recherche sur mobile
+const _originalRenderResults = renderResults;
+function renderResults(stations) {
+  _originalRenderResults(stations);
+  if (isMobile() && stations.length) {
+    setTimeout(() => {
+      if (!mobilePanelOpen) toggleMobilePanel();
+      mobileNavActivate('navList');
+    }, 300);
+  }
+}
+
+// Adapter la taille de la carte au resize
+window.addEventListener('resize', () => {
+  setTimeout(() => map.invalidateSize(), 100);
+});
+
+// Geste swipe vers le bas pour fermer le panel
+(function setupSwipe() {
+  let startY = 0;
+  const panel = document.querySelector('.left-panel');
+  panel.addEventListener('touchstart', e => { startY = e.touches[0].clientY; }, { passive: true });
+  panel.addEventListener('touchend', e => {
+    const dy = e.changedTouches[0].clientY - startY;
+    if (dy > 60 && mobilePanelOpen) toggleMobilePanel();
+  }, { passive: true });
+})();
+
+// Cacher le hero après une recherche sur mobile
+function hideMobileHero() {
+  if (isMobile()) {
+    document.querySelector('.hero')?.classList.add('hidden-mobile');
+  }
+}
+
+// Patcher geolocate pour cacher le hero
+const _origGeolocate = geolocate;
+function geolocate() {
+  _origGeolocate();
+  hideMobileHero();
+}
+
+// Patcher doSearch pour cacher le hero
+const _origDoSearch = doSearch;
+function doSearch() {
+  _origDoSearch();
+  hideMobileHero();
+}
+
+</script>
+</body>
+</html>
